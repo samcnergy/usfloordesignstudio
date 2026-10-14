@@ -66,6 +66,14 @@ export function counterPaint(catalog: Catalog, design: DesignData): Paint {
   };
 }
 
+// Finish photos are pictures of a whole door: white background, a shadow edge
+// and a drawer front across the top. Only the plain wood below the drawer is
+// used (measured on the vendor photos, as fractions of the picture).
+const WOOD = { x: 0.1, y: 0.28, w: 0.78, h: 0.65 };
+// one tile in inches, the same shape as that wood area so the grain is not stretched
+const TILE_H = 24;
+const TILE_W = 16.8;
+
 /** <defs> with one image pattern per finish or countertop that has a photo. Tiles are in inches. */
 export function PaintDefs({ catalog }: { catalog: Catalog }) {
   return (
@@ -73,9 +81,21 @@ export function PaintDefs({ catalog }: { catalog: Catalog }) {
       {catalog.finishes
         .filter((f) => f.image_url && f.fill_mode === "photo")
         .map((f) => (
-          <pattern key={f.id} id={`fin-${f.id}`} patternUnits="userSpaceOnUse" width={24} height={24}>
-            <rect width={24} height={24} fill={f.color_hex} />
-            <image href={f.image_url!} width={24} height={24} preserveAspectRatio="xMidYMid slice" />
+          // four tiles, mirrored left to right and top to bottom, so neighbors meet without a visible seam
+          <pattern key={f.id} id={`fin-${f.id}`} patternUnits="userSpaceOnUse" width={TILE_W * 2} height={TILE_H * 2}>
+            <rect width={TILE_W * 2} height={TILE_H * 2} fill={f.color_hex} />
+            {[
+              [1, 1],
+              [-1, 1],
+              [1, -1],
+              [-1, -1],
+            ].map(([sx, sy]) => (
+              <g key={`${sx}${sy}`} transform={`translate(${TILE_W}, ${TILE_H}) scale(${sx}, ${sy})`}>
+                <svg x={-TILE_W} y={-TILE_H} width={TILE_W} height={TILE_H} viewBox={`${WOOD.x} ${WOOD.y} ${WOOD.w} ${WOOD.h}`} preserveAspectRatio="none">
+                  <image href={f.image_url!} width={1} height={1} preserveAspectRatio="none" />
+                </svg>
+              </g>
+            ))}
           </pattern>
         ))}
       {catalog.countertops
