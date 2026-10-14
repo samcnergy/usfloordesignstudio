@@ -6,7 +6,7 @@
 import { Brand } from "@/components/Brand";
 import { ElevationView } from "@/components/drawing/ElevationView";
 import { PlanView } from "@/components/drawing/PlanView";
-import { WALLS } from "@/lib/types";
+import { roomShape } from "@/lib/geometry";
 import type { Catalog, DesignRecord } from "@/lib/types";
 import { buildSchedule } from "@/lib/schedule";
 
@@ -26,7 +26,9 @@ export function PrintSheet({ record, catalog }: { record: DesignRecord; catalog:
   const maker = catalog.manufacturers.find((m) => m.id === finishLine?.manufacturer_id);
   const counter = catalog.countertops.find((c) => c.id === design.countertopId) ?? catalog.countertops[0];
   const runs = [
-    ...WALLS.filter((w) => design.items.some((i) => i.run === w) || design.openings.some((o) => o.wall === w)),
+    ...roomShape(design.room)
+      .walls.map((w) => w.id)
+      .filter((w) => design.items.some((i) => i.run === w) || design.openings.some((o) => o.wall === w)),
     ...design.islands.filter((isl) => design.items.some((i) => i.run === isl.id)).map((i) => i.id),
   ];
   const elevationPages = chunk(runs, 4);

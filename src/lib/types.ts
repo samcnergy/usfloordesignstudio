@@ -113,12 +113,21 @@ export interface Catalog {
   countertops: Countertop[];
 }
 
-export type WallId = "A" | "B" | "C" | "D";
-export const WALLS: WallId[] = ["A", "B", "C", "D"];
+export type WallId = string;
+
+export interface Wall {
+  id: string; // stable id; the letter shown (A, B, C...) comes from the wall's position
+  length: number;
+  // Angle inside the room at the end of this wall, where it meets the next one, in degrees.
+  // 90 is a normal corner, 270 the inside corner of an L, 135 an angled corner.
+  corner: number;
+  open?: boolean; // no wall here, the kitchen opens to another room
+}
 
 export interface Room {
-  width: number; // left to right in top view (walls A and C)
-  depth: number; // top to bottom in top view (walls B and D)
+  // Walls in order, clockwise around the room starting with Wall A (top of the top view, drawn left to right).
+  // The last wall always closes the shape, so its length and the two corners around it are worked out.
+  walls: Wall[];
   ceiling: number;
   wallThickness: number;
 }
@@ -214,7 +223,7 @@ export interface DesignRecord {
 export function emptyDesign(): DesignData {
   return {
     version: 1,
-    room: { width: 144, depth: 120, ceiling: 96, wallThickness: 4.5 },
+    room: rectangleRoom(144, 120),
     islands: [],
     openings: [],
     items: [],
@@ -224,4 +233,32 @@ export function emptyDesign(): DesignData {
     photos: [],
     extras: [],
   };
+}
+
+export function rectangleRoom(width: number, depth: number, ceiling = 96, wallThickness = 4.5): Room {
+  return {
+    walls: [
+      { id: "A", length: width, corner: 90 },
+      { id: "B", length: depth, corner: 90 },
+      { id: "C", length: width, corner: 90 },
+      { id: "D", length: depth, corner: 90 },
+    ],
+    ceiling,
+    wallThickness,
+  };
+}
+
+/** Designs saved before custom room shapes stored only width and depth. */
+export function normalizeRoom(raw: unknown): Room {
+  const r = (raw ?? {}) as Partial<Room> & { width?: number; depth?: number };
+  const ceiling = typeof r.ceiling === "number" ? r.ceiling : 96;
+  const wallThickness = typeof r.wallThickness === "number" ? r.wallThickness : 4.5;
+  if (Array.isArray(r.walls) && r.walls.length >= 3) {
+    return {
+      walls: r.walls.map((w) => ({ id: String(w.id), length: Number(w.length) || 0, corner: Number(w.corner) || 90, ...(w.open ? { open: true } : {}) })),
+      ceiling,
+      wallThickness,
+    };
+  }
+  return rectangleRoom(typeof r.width === "number" ? r.width : 144, typeof r.depth === "number" ? r.depth : 120, ceiling, wallThickness);
 }

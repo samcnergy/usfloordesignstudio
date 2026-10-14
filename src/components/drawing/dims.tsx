@@ -1,5 +1,6 @@
 // Architectural dimension strings for SVG drawings in inch units.
 
+import type { Vec } from "@/lib/geometry";
 import { fmtIn } from "@/lib/units";
 
 const DIM = "#4A4D50";
@@ -54,6 +55,46 @@ export function DimV({ y0, y1, x, fs, label }: { y0: number; y1: number; x: numb
         textAnchor="middle"
         fill={DIM}
         transform={`rotate(-90 ${x - fs * 0.35} ${cy})`}
+        style={{ fontVariantNumeric: "tabular-nums" }}
+      >
+        {text}
+      </text>
+    </g>
+  );
+}
+
+/** Dimension string parallel to a line from p0 to p1, pushed out along the unit normal o by d. */
+export function DimAligned({ p0, p1, o, d, fs, label }: { p0: Vec; p1: Vec; o: Vec; d: number; fs: number; label?: string }) {
+  const len = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+  if (len < 0.01) return null;
+  const ux = (p1.x - p0.x) / len;
+  const uy = (p1.y - p0.y) / len;
+  const a = { x: p0.x + o.x * d, y: p0.y + o.y * d };
+  const b = { x: p1.x + o.x * d, y: p1.y + o.y * d };
+  const t = fs * 0.35;
+  // ticks are the usual 45 degree slashes, turned with the line
+  const tx = (ux + o.x) * t * 0.7071;
+  const ty = (uy + o.y) * t * 0.7071;
+  const text = label ?? fmtIn(len);
+  const fits = len > text.length * fs * 0.55;
+  let angle = (Math.atan2(uy, ux) * 180) / Math.PI;
+  // keep text readable from the bottom or the right; walls within a hair of vertical all read bottom to top
+  if (angle > 89.9) angle -= 180;
+  else if (angle < -90.1) angle += 180;
+  const c = { x: (a.x + b.x) / 2 + o.x * fs * 0.75, y: (a.y + b.y) / 2 + o.y * fs * 0.75 };
+  return (
+    <g>
+      <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={DIM} strokeWidth={0.22} />
+      <line x1={a.x - tx} y1={a.y - ty} x2={a.x + tx} y2={a.y + ty} stroke={DIM} strokeWidth={0.3} />
+      <line x1={b.x - tx} y1={b.y - ty} x2={b.x + tx} y2={b.y + ty} stroke={DIM} strokeWidth={0.3} />
+      <text
+        x={c.x}
+        y={c.y}
+        fontSize={fits ? fs : fs * 0.8}
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fill={DIM}
+        transform={`rotate(${angle} ${c.x} ${c.y})`}
         style={{ fontVariantNumeric: "tabular-nums" }}
       >
         {text}

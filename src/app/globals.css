@@ -279,3 +279,19 @@ textarea.input { resize: vertical; }
 .imp-table-wrap .table { border: 0; font-size: 13px; }
 .imp-table-wrap .table td, .imp-table-wrap .table th { padding: 6px 8px; }
 .imp-table-wrap thead th { position: sticky; top: 0; background: var(--surface); z-index: 1; }
+
+/* Room tab: walls */
+.room-issue { margin: 0; padding: 8px 10px; border: 1px solid var(--red); background: #FDF1F1; color: var(--red); font-size: var(--t-small); font-weight: 600; }
+.wall-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s-2); }
+.wall-row { display: grid; grid-template-columns: 32px 1fr; gap: var(--s-2); padding: var(--s-2); border: 1px solid var(--line); background: var(--surface); }
+.wall-row-on { border-color: var(--red); }
+.wall-badge { width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--text); background: var(--surface); font-weight: 700; cursor: pointer; }
+.wall-row-on .wall-badge { background: var(--red); border-color: var(--red); color: #FFFFFF; }
+.wall-badge-open { border-style: dashed; }
+.wall-fields { display: flex; flex-direction: column; gap: var(--s-2); min-width: 0; }
+.wall-computed { min-height: 40px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-weight: 600; }
+.wall-actions { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
+.wall-actions .check { display: inline-flex; align-items: center; gap: 6px; font-size: var(--t-small); margin-right: auto; cursor: pointer; }
+.corner-input { display: flex; gap: 6px; }
+.corner-input select.input { flex: 1; min-width: 0; }
+.corner-num { width: 72px; flex: 0 0 72px; }

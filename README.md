@@ -22,6 +22,7 @@ Next.js 16 (App Router), React 19, TypeScript strict, Supabase (Postgres, Auth, 
 | `src/lib/data.ts` | Every database read and write. |
 | `src/components/drawing/` | Top view (`PlanView`), front views (`ElevationView`, `CabinetFront`), dimension strings, fills. |
 | `src/components/editor/Editor.tsx` | The designer screen: panels, dragging, undo, keyboard, autosave. |
+| `src/components/editor/RoomPanel.tsx` | Room tab: ceiling, wall thickness, and the walls with their lengths, corners and open sides. |
 | `src/components/print/PrintSheet.tsx` | The printable package, US Letter landscape. |
 | `src/components/app/CatalogManager.tsx` | Catalog admin: manufacturers, lines, products (one row per SKU), colors, countertops. |
 | `src/components/app/ImportWizard.tsx` | Catalog > Import: preview and load a manufacturer's products. |
@@ -31,7 +32,9 @@ Next.js 16 (App Router), React 19, TypeScript strict, Supabase (Postgres, Auth, 
 
 ### Coordinates
 
-The top view has x to the right and y down, with the origin at the inside corner of Wall A (top) and Wall D (left). Walls are lettered clockwise. Each wall or island is a run with an origin at its left end (as seen standing in the room facing it), a direction `u` along the run and a direction `n` into the room. A cabinet's position is its offset along the run, so walls and islands share one placement model, and a front view's x axis is simply that offset.
+The top view has x to the right and y down, with the origin at the left end of Wall A. A room is a list of walls walked clockwise, each with a length, the corner angle inside the room at its end (90 normal, 270 the inside corner of an L, 135 a cut corner) and an open flag for a side with no wall. The last wall always closes the shape, so its length and the corners around it are worked out (`roomShape` in `geometry.ts`). Walls keep a stable id and get their letter from their position. Designs saved before this stored only width and depth; `normalizeRoom` turns those into walls A to D.
+
+Each wall or island is a run with an origin at its left end (as seen standing in the room facing it), a direction `u` along the run and a direction `n` into the room. A cabinet's position is its offset along the run, so walls and islands share one placement model, and a front view's x axis is simply that offset.
 
 ## Catalog
 

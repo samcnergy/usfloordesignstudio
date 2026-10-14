@@ -1,6 +1,6 @@
-// Room geometry. Top view coordinates: x to the right, y down, origin at the
-// inside corner where wall A meets wall D. Walls are labeled clockwise:
-// A = top, B = right, C = bottom, D = left.
+// Room geometry. Top view coordinates: x to the right, y down. The room is a
+// list of walls walked clockwise, starting with Wall A at the origin heading
+// right. Any number of walls and any corner angle; the last wall closes the shape.
 //
 // Every wall and island is a "run". A run has an origin (its left end as seen
 // by someone standing in the room facing it), a unit vector u pointing to the
@@ -8,8 +8,7 @@
 // room (the direction the cabinet fronts face). Cabinets on a run are placed
 // by offset along u, so walls and islands share one placement model.
 
-import type { DesignData, Island, Opening, PlacedItem, Room, WallId } from "./types";
-import { WALLS } from "./types";
+import type { DesignData, Island, Opening, PlacedItem, Room, Wall, WallId } from "./types";
 
 export interface Vec {
   x: number;
@@ -24,6 +23,7 @@ export interface RunFrame {
   u: Vec;
   n: Vec;
   length: number;
+  open?: boolean;
 }
 
 export interface Rect {
@@ -33,29 +33,202 @@ export interface Rect {
   y1: number;
 }
 
-const ISLAND_MIN_LENGTH = 24;
+export interface WallGeom extends RunFrame {
+  index: number;
+  letter: string;
+  end: Vec;
+  /** Corner angle inside the room at the end of this wall, as drawn. */
+  corner: number;
+  /** Outside face of the wall: start and end, mitred at the corners. */
+  outerStart: Vec;
+  outerEnd: Vec;
+  /** The closing wall and the corners on either side of it are worked out, not typed. */
+  computed: { length: boolean; corner: boolean };
+}
 
-export function isWall(run: string): run is WallId {
-  return (WALLS as string[]).includes(run);
+export interface RoomShape {
+  walls: WallGeom[];
+  bounds: Rect; // outside faces of the walls
+  inner: Vec[];
+  issue: string | null;
+}
+
+const ISLAND_MIN_LENGTH = 24;
+export const MAX_WALLS = 26;
+const EPS = 0.01;
+
+export function wallLetter(index: number): string {
+  return String.fromCharCode(65 + index);
+}
+
+function rad(deg: number): number {
+  return (deg * Math.PI) / 180;
+}
+
+function turnBetween(a: Vec, b: Vec): number {
+  return (Math.atan2(a.x * b.y - a.y * b.x, a.x * b.x + a.y * b.y) * 180) / Math.PI;
+}
+
+function roundAngle(v: number): number {
+  return Math.round(v * 100) / 100;
+}
+
+function intersect(p1: Vec, u1: Vec, p2: Vec, u2: Vec): Vec | null {
+  const den = u1.x * u2.y - u1.y * u2.x;
+  if (Math.abs(den) < 1e-9) return null;
+  const a = ((p2.x - p1.x) * u2.y - (p2.y - p1.y) * u2.x) / den;
+  return { x: p1.x + u1.x * a, y: p1.y + u1.y * a };
+}
+
+function segmentsCross(a0: Vec, a1: Vec, b0: Vec, b1: Vec): boolean {
+  const d = (p: Vec, q: Vec, r: Vec) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+  const d1 = d(b0, b1, a0);
+  const d2 = d(b0, b1, a1);
+  const d3 = d(a0, a1, b0);
+  const d4 = d(a0, a1, b1);
+  return ((d1 > EPS && d2 < -EPS) || (d1 < -EPS && d2 > EPS)) && ((d3 > EPS && d4 < -EPS) || (d3 < -EPS && d4 > EPS));
+}
+
+const shapeCache = new WeakMap<Room, RoomShape>();
+
+/** Walks the walls and works out the closing wall, the corners as drawn, and the outside faces. */
+export function roomShape(room: Room): RoomShape {
+  const cached = shapeCache.get(room);
+  if (cached) return cached;
+  const src: Wall[] = room.walls;
+  const N = src.length;
+  const t = room.wallThickness;
+  const starts: Vec[] = [];
+  const dirs: Vec[] = [];
+  const lengths: number[] = [];
+  let p: Vec = { x: 0, y: 0 };
+  let heading = 0;
+  for (let i = 0; i < N - 1; i++) {
+    const u = { x: Math.cos(rad(heading)), y: Math.sin(rad(heading)) };
+    starts.push(p);
+    dirs.push(u);
+    lengths.push(Math.max(0, src[i].length));
+    p = { x: p.x + u.x * lengths[i], y: p.y + u.y * lengths[i] };
+    if (i < N - 2) heading += 180 - src[i].corner;
+  }
+  // the last wall runs from wherever the others end back to the start of Wall A
+  const closing = Math.hypot(p.x, p.y);
+  starts.push(p);
+  dirs.push(closing > EPS ? { x: -p.x / closing, y: -p.y / closing } : { x: 1, y: 0 });
+  lengths.push(closing);
+
+  const corners = src.map((w, i) => {
+    if (i < N - 2) return w.corner;
+    const next = i === N - 1 ? { x: 1, y: 0 } : dirs[i + 1];
+    return roundAngle(180 - turnBetween(dirs[i], next));
+  });
+
+  // outside face: each wall's inside line pushed out by the wall thickness, mitred where neighbors meet
+  const outer: Vec[] = [];
+  for (let i = 0; i < N; i++) {
+    const prev = (i + N - 1) % N;
+    const ni = { x: -dirs[i].y, y: dirs[i].x };
+    const np = { x: -dirs[prev].y, y: dirs[prev].x };
+    const a = { x: starts[i].x - ni.x * t, y: starts[i].y - ni.y * t };
+    const b = { x: starts[i].x - np.x * t, y: starts[i].y - np.y * t };
+    const hit = intersect(b, dirs[prev], a, dirs[i]);
+    // very sharp corners would push the mitre far out; square them off instead
+    outer.push(hit && Math.hypot(hit.x - starts[i].x, hit.y - starts[i].y) < t * 4 ? hit : a);
+  }
+
+  const walls: WallGeom[] = src.map((w, i) => {
+    const u = dirs[i];
+    const end = { x: starts[i].x + u.x * lengths[i], y: starts[i].y + u.y * lengths[i] };
+    const n = { x: -u.y, y: u.x };
+    const outerEndRaw = outer[(i + 1) % N];
+    return {
+      id: w.id,
+      kind: "wall",
+      label: `Wall ${wallLetter(i)}`,
+      letter: wallLetter(i),
+      index: i,
+      origin: starts[i],
+      u,
+      n,
+      length: lengths[i],
+      open: !!w.open,
+      end,
+      corner: corners[i],
+      outerStart: outer[i],
+      outerEnd: outerEndRaw,
+      computed: { length: i === N - 1, corner: i >= N - 2 },
+    };
+  });
+
+  let area = 0;
+  for (let i = 0; i < N; i++) {
+    const a = starts[i];
+    const b = starts[(i + 1) % N];
+    area += a.x * b.y - b.x * a.y;
+  }
+  let issue: string | null = null;
+  if (closing < 1) issue = `Wall ${wallLetter(N - 1)} has no length. The other walls already close the room.`;
+  else if (area <= 0) issue = "The walls wind the wrong way. Check the corner angles: a normal corner is 90°, the inside corner of an L is 270°.";
+  else {
+    outerLoop: for (let i = 0; i < N; i++) {
+      for (let j = i + 2; j < N; j++) {
+        if (i === 0 && j === N - 1) continue;
+        if (segmentsCross(starts[i], walls[i].end, starts[j], walls[j].end)) {
+          issue = `Wall ${wallLetter(i)} crosses Wall ${wallLetter(j)}. Check the lengths and corners.`;
+          break outerLoop;
+        }
+      }
+    }
+  }
+
+  const xs = outer.map((v) => v.x).concat(starts.map((v) => v.x));
+  const ys = outer.map((v) => v.y).concat(starts.map((v) => v.y));
+  const shape: RoomShape = {
+    walls,
+    bounds: { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) },
+    inner: starts,
+    issue,
+  };
+  shapeCache.set(room, shape);
+  return shape;
+}
+
+export function wallGeom(room: Room, wall: WallId): WallGeom | null {
+  return roomShape(room).walls.find((w) => w.id === wall) ?? null;
+}
+
+export function isWall(room: Room, run: string): boolean {
+  return room.walls.some((w) => w.id === run);
 }
 
 export function wallLength(room: Room, wall: WallId): number {
-  return wall === "A" || wall === "C" ? room.width : room.depth;
+  return wallGeom(room, wall)?.length ?? 0;
 }
 
-export function wallFrame(room: Room, wall: WallId): RunFrame {
-  const { width: W, depth: D } = room;
-  const base = { id: wall, kind: "wall" as const, label: `Wall ${wall}`, length: wallLength(room, wall) };
-  switch (wall) {
-    case "A":
-      return { ...base, origin: { x: 0, y: 0 }, u: { x: 1, y: 0 }, n: { x: 0, y: 1 } };
-    case "B":
-      return { ...base, origin: { x: W, y: 0 }, u: { x: 0, y: 1 }, n: { x: -1, y: 0 } };
-    case "C":
-      return { ...base, origin: { x: W, y: D }, u: { x: -1, y: 0 }, n: { x: 0, y: -1 } };
-    case "D":
-      return { ...base, origin: { x: 0, y: D }, u: { x: 0, y: -1 }, n: { x: 1, y: 0 } };
+export function wallLabel(room: Room, wall: WallId): string {
+  return wallGeom(room, wall)?.label ?? "Wall";
+}
+
+export function wallFrame(room: Room, wall: WallId): RunFrame | null {
+  return wallGeom(room, wall);
+}
+
+/** Middle of the floor, for dropping new islands. */
+export function roomCenter(room: Room): Vec {
+  const pts = roomShape(room).inner;
+  let a = 0;
+  let cx = 0;
+  let cy = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i];
+    const q = pts[(i + 1) % pts.length];
+    const c = p.x * q.y - q.x * p.y;
+    a += c;
+    cx += (p.x + q.x) * c;
+    cy += (p.y + q.y) * c;
   }
+  if (Math.abs(a) < EPS) return { x: 0, y: 0 };
+  return { x: cx / (3 * a), y: cy / (3 * a) };
 }
 
 export function islandUnit(rotation: Island["rotation"]): Vec {
@@ -91,13 +264,13 @@ export function islandFrame(design: DesignData, island: Island): RunFrame {
 }
 
 export function runFrame(design: DesignData, run: string): RunFrame | null {
-  if (isWall(run)) return wallFrame(design.room, run);
+  if (isWall(design.room, run)) return wallFrame(design.room, run);
   const island = design.islands.find((i) => i.id === run);
   return island ? islandFrame(design, island) : null;
 }
 
 export function allFrames(design: DesignData): RunFrame[] {
-  return [...WALLS.map((w) => wallFrame(design.room, w)), ...design.islands.map((i) => islandFrame(design, i))];
+  return [...roomShape(design.room).walls, ...design.islands.map((i) => islandFrame(design, i))];
 }
 
 export function pointOn(frame: RunFrame, s: number, t: number): Vec {
@@ -105,6 +278,19 @@ export function pointOn(frame: RunFrame, s: number, t: number): Vec {
     x: frame.origin.x + frame.u.x * s + frame.n.x * t,
     y: frame.origin.y + frame.u.y * s + frame.n.y * t,
   };
+}
+
+/** Corner points of the area covering s in [s0, s1] along the run and t in [t0, t1] into the room. */
+export function runQuad(frame: RunFrame, s0: number, s1: number, t0: number, t1: number): Vec[] {
+  return [pointOn(frame, s0, t0), pointOn(frame, s1, t0), pointOn(frame, s1, t1), pointOn(frame, s0, t1)];
+}
+
+export function itemQuad(item: PlacedItem, frame: RunFrame): Vec[] {
+  return runQuad(frame, item.offset, item.offset + item.width, 0, item.depth);
+}
+
+export function pointsAttr(pts: Vec[]): string {
+  return pts.map((p) => `${p.x},${p.y}`).join(" ");
 }
 
 /** Axis-aligned rectangle covering s in [s0, s1] along the run and t in [t0, t1] into the room. */
@@ -126,10 +312,34 @@ export function islandRect(design: DesignData, island: Island): Rect {
   return runRect(frame, 0, frame.length, 0, depth);
 }
 
-const EPS = 0.01;
-
-function rectsOverlap(a: Rect, b: Rect): boolean {
-  return a.x0 < b.x1 - EPS && b.x0 < a.x1 - EPS && a.y0 < b.y1 - EPS && b.y0 < a.y1 - EPS;
+/** Convex outlines overlap by more than a hair (separating axis test). */
+function quadsOverlap(a: Vec[], b: Vec[]): boolean {
+  for (const poly of [a, b]) {
+    for (let i = 0; i < poly.length; i++) {
+      const p = poly[i];
+      const q = poly[(i + 1) % poly.length];
+      const len = Math.hypot(q.x - p.x, q.y - p.y);
+      if (len < 1e-9) continue;
+      const ax = -(q.y - p.y) / len;
+      const ay = (q.x - p.x) / len;
+      let aMin = Infinity;
+      let aMax = -Infinity;
+      let bMin = Infinity;
+      let bMax = -Infinity;
+      for (const v of a) {
+        const d = v.x * ax + v.y * ay;
+        aMin = Math.min(aMin, d);
+        aMax = Math.max(aMax, d);
+      }
+      for (const v of b) {
+        const d = v.x * ax + v.y * ay;
+        bMin = Math.min(bMin, d);
+        bMax = Math.max(bMax, d);
+      }
+      if (aMax <= bMin + EPS || bMax <= aMin + EPS) return false;
+    }
+  }
+  return true;
 }
 
 function spansOverlap(a0: number, a1: number, b0: number, b1: number): boolean {
@@ -150,7 +360,7 @@ export interface Problem {
 }
 
 export function runLabel(design: DesignData, run: string): string {
-  if (isWall(run)) return `Wall ${run}`;
+  if (isWall(design.room, run)) return wallLabel(design.room, run);
   return design.islands.find((i) => i.id === run)?.name ?? "Island";
 }
 
@@ -158,17 +368,20 @@ export function runLabel(design: DesignData, run: string): string {
 export function findProblems(design: DesignData): Problem[] {
   const problems: Problem[] = [];
   const frames = new Map(allFrames(design).map((f) => [f.id, f]));
-  const rects = new Map<string, Rect>();
+  const quads = new Map<string, Vec[]>();
   for (const it of design.items) {
     const f = frames.get(it.run);
-    if (f) rects.set(it.id, itemRect(it, f));
+    if (f) quads.set(it.id, itemQuad(it, f));
   }
 
   for (const it of design.items) {
-    if (isWall(it.run)) {
-      const len = wallLength(design.room, it.run);
-      if (it.offset < -EPS || it.offset + it.width > len + EPS) {
-        problems.push({ ids: [it.id], message: `${itemLabel(it)} runs past the end of Wall ${it.run}` });
+    const f = frames.get(it.run);
+    if (f?.kind === "wall") {
+      if (it.offset < -EPS || it.offset + it.width > f.length + EPS) {
+        problems.push({ ids: [it.id], message: `${itemLabel(it)} runs past the end of ${f.label}` });
+      }
+      if (f.open && it.mountHeight > 0) {
+        problems.push({ ids: [it.id], message: `${itemLabel(it)} hangs on ${f.label}, which is open` });
       }
     }
     const [, v1] = verticalSpan(it);
@@ -182,30 +395,36 @@ export function findProblems(design: DesignData): Problem[] {
     for (let j = i + 1; j < items.length; j++) {
       const a = items[i];
       const b = items[j];
-      const ra = rects.get(a.id);
-      const rb = rects.get(b.id);
-      if (!ra || !rb) continue;
+      const qa = quads.get(a.id);
+      const qb = quads.get(b.id);
+      if (!qa || !qb) continue;
       const [a0, a1] = verticalSpan(a);
       const [b0, b1] = verticalSpan(b);
-      if (rectsOverlap(ra, rb) && spansOverlap(a0, a1, b0, b1)) {
+      if (spansOverlap(a0, a1, b0, b1) && quadsOverlap(qa, qb)) {
         problems.push({ ids: [a.id, b.id], message: `${itemLabel(a)} overlaps ${itemLabel(b)}` });
       }
     }
   }
 
   for (const op of design.openings) {
+    const f = frames.get(op.wall);
+    if (!f) {
+      problems.push({ ids: [op.id], message: `A ${op.type} is on a wall that was removed` });
+      continue;
+    }
     const [o0, o1] = openingSpan(op);
     for (const it of items) {
       if (it.run !== op.wall) continue;
       const [v0, v1] = verticalSpan(it);
       if (spansOverlap(it.offset, it.offset + it.width, op.offset, op.offset + op.width) && spansOverlap(v0, v1, o0, o1)) {
         const what = op.type === "window" ? "window" : op.type === "door" ? "door" : "opening";
-        problems.push({ ids: [it.id, op.id], message: `${itemLabel(it)} blocks the ${what} on Wall ${op.wall}` });
+        problems.push({ ids: [it.id, op.id], message: `${itemLabel(it)} blocks the ${what} on ${f.label}` });
       }
     }
-    if (op.offset < -EPS || op.offset + op.width > wallLength(design.room, op.wall) + EPS) {
-      problems.push({ ids: [op.id], message: `A ${op.type} runs past the end of Wall ${op.wall}` });
+    if (op.offset < -EPS || op.offset + op.width > f.length + EPS) {
+      problems.push({ ids: [op.id], message: `A ${op.type} runs past the end of ${f.label}` });
     }
+    if (f.open) problems.push({ ids: [op.id], message: `A ${op.type} is on ${f.label}, which is open` });
   }
   return problems;
 }
@@ -232,7 +451,7 @@ export function firstFreeOffset(design: DesignData, run: string, width: number, 
     const [v0, v1] = verticalSpan(it);
     if (spansOverlap(v0, v1, span[0], span[1])) taken.push([it.offset, it.offset + it.width]);
   }
-  if (isWall(run)) {
+  if (isWall(design.room, run)) {
     for (const op of design.openings) {
       if (op.wall !== run) continue;
       const [o0, o1] = openingSpan(op);

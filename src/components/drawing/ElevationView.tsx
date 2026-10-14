@@ -97,6 +97,7 @@ export function ElevationView({ design, catalog, run, selectedId, problemIds, on
   if (!frame) return null;
   const L = frame.length;
   const island = frame.kind === "island";
+  const open = !!frame.open;
   const islandTop = design.items.filter((i) => i.run === run).reduce((m, i) => Math.max(m, i.mountHeight + i.height), 0);
   // islands are drawn without a wall behind them, so the view only needs to clear the tallest piece
   const H = island ? Math.max(48, Math.ceil(islandTop + 8)) : design.room.ceiling;
@@ -108,7 +109,7 @@ export function ElevationView({ design, catalog, run, selectedId, problemIds, on
   const Y = (z: number) => H - z;
 
   const items = design.items.filter((i) => i.run === run);
-  const openings = isWall(run) ? design.openings.filter((o) => o.wall === run) : [];
+  const openings = isWall(design.room, run) ? design.openings.filter((o) => o.wall === run) : [];
   const lower = items.filter((i) => i.mountHeight === 0).sort((a, b) => a.offset - b.offset);
   const upper = items.filter((i) => i.mountHeight > 0).sort((a, b) => a.offset - b.offset);
   const counter = counterPaint(catalog, design);
@@ -171,7 +172,7 @@ export function ElevationView({ design, catalog, run, selectedId, problemIds, on
       style={{ touchAction: "none", userSelect: "none" }}
     >
       <PaintDefs catalog={catalog} />
-      {!island && <rect x={0} y={0} width={L} height={H} fill="#FBFAF7" stroke="#B9BBBD" strokeWidth={0.3} />}
+      {!island && <rect x={0} y={0} width={L} height={H} fill={open ? "none" : "#FBFAF7"} stroke="#B9BBBD" strokeWidth={0.3} strokeDasharray={open ? "2 1.5" : undefined} />}
 
       {openings.map((op) => (
         <g key={op.id} onPointerDown={down({ kind: "opening", id: op.id })} style={{ cursor: onTargetDown ? "grab" : undefined }}>
@@ -236,7 +237,7 @@ export function ElevationView({ design, catalog, run, selectedId, problemIds, on
       {!island && <DimV y0={Y(0)} y1={Y(H)} x={-fs * 4.6} fs={fs * 0.85} />}
 
       <text x={0} y={H + MB - fs * 0.3} fontSize={fs} textAnchor="start" fill="#1A1D1F" fontWeight={700} letterSpacing={fs * 0.08}>
-        {frame.label.toUpperCase()}
+        {open ? `${frame.label.toUpperCase()} (OPEN)` : frame.label.toUpperCase()}
       </text>
     </svg>
   );

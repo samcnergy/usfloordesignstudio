@@ -3,7 +3,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Catalog, Countertop, DesignData, DesignRecord, Finish, Manufacturer, Product, ProductLine } from "./types";
-import { emptyDesign } from "./types";
+import { emptyDesign, normalizeRoom } from "./types";
 
 const num = (v: unknown) => (v === null || v === undefined ? null : typeof v === "string" ? parseFloat(v) : (v as number));
 
@@ -109,7 +109,7 @@ function normalizeData(raw: unknown): DesignData {
   return {
     ...base,
     ...d,
-    room: { ...base.room, ...(d.room ?? {}) },
+    room: normalizeRoom(d.room),
     islands: d.islands ?? [],
     openings: d.openings ?? [],
     items: d.items ?? [],

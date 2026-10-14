@@ -9,12 +9,12 @@ import { Brand } from "@/components/Brand";
 import { ElevationView, type DrawTarget } from "@/components/drawing/ElevationView";
 import { PlanView } from "@/components/drawing/PlanView";
 import { PrintSheet } from "@/components/print/PrintSheet";
-import { findProblems, firstFreeOffset, isWall, itemLabel, itemRect, runFrame, runLabel, wallLength } from "@/lib/geometry";
+import { findProblems, firstFreeOffset, isWall, itemLabel, itemQuad, roomCenter, roomShape, runFrame, runLabel, wallLabel, wallLength, type Vec } from "@/lib/geometry";
 import type { Catalog, Category, DesignData, DesignRecord, ExtraItem, Island, Opening, OpeningType, PlacedItem, Product, ProductLine } from "@/lib/types";
-import { WALLS } from "@/lib/types";
 import { useHistory } from "@/lib/useHistory";
 import { fmtIn, snap } from "@/lib/units";
 import { LengthInput } from "./LengthInput";
+import { RoomPanel } from "./RoomPanel";
 
 type Meta = Pick<DesignRecord, "name" | "customer_name" | "customer_phone" | "customer_address" | "designer_name" | "notes">;
 type SaveState = "saved" | "unsaved" | "saving" | "error" | "local";
@@ -102,8 +102,9 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
   const selectedIsland = design.islands.find((i) => i.id === selectedId) ?? null;
 
   // keep the active run valid if an island is removed
-  const activeRunValid = isWall(activeRun) || design.islands.some((i) => i.id === activeRun) ? activeRun : "A";
-  const viewValid = view === "plan" || isWall(view) || design.islands.some((i) => i.id === view) ? view : "plan";
+  const firstWall = design.room.walls[0].id;
+  const activeRunValid = isWall(design.room, activeRun) || design.islands.some((i) => i.id === activeRun) ? activeRun : firstWall;
+  const viewValid = view === "plan" || isWall(design.room, view) || design.islands.some((i) => i.id === view) ? view : "plan";
 
   // ---------- saving ----------
   const [saved, setSaved] = useState<{ design: DesignData; meta: Meta }>({ design: initial.data, meta });
@@ -174,8 +175,12 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
     }
     const run = activeRunValid;
     const mount = p.mount_height ?? 0;
-    if (!isWall(run) && (p.category === "wall" || p.style === "hood" || mount > 0)) {
-      flash("Wall-hung pieces go on a wall. Pick Wall A to D first.");
+    if (!isWall(design.room, run) && (p.category === "wall" || p.style === "hood" || mount > 0)) {
+      flash("Wall-hung pieces go on a wall. Pick a wall first.");
+      return;
+    }
+    if (roomShape(design.room).walls.some((w) => w.id === run && w.open) && (p.category === "wall" || p.style === "hood" || mount > 0)) {
+      flash(`${wallLabel(design.room, run)} is open, so there is nothing to hang this on. Pick another wall.`);
       return;
     }
     const width = p.width;
@@ -218,7 +223,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
       lineId: d.lineId ?? (p.category !== "appliance" ? p.line_id : d.lineId),
     }));
     setSelectedId(item.id);
-    if (isWall(run) && offset + width > wallLength(design.room, run)) flash(`No room left on Wall ${run}. The piece is placed past the end; move or resize it.`);
+    if (isWall(design.room, run) && offset + width > wallLength(design.room, run)) flash(`No room left on ${wallLabel(design.room, run)}. The piece is placed past the end; move or resize it.`);
   };
 
   /** Change the design's cabinet line and move every placed cabinet to the same SKU in that line where it exists. */
@@ -295,7 +300,12 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
   };
 
   const addOpening = (type: OpeningType) => {
-    const wall = isWall(activeRunValid) ? activeRunValid : "A";
+    const solid = roomShape(design.room).walls.filter((w) => !w.open);
+    const wall = solid.some((w) => w.id === activeRunValid) ? activeRunValid : solid[0]?.id;
+    if (!wall) {
+      flash("Every wall is open. Turn one back into a wall in the Room tab first.");
+      return;
+    }
     const width = type === "door" ? 32 : 36;
     const op: Opening = {
       id: uid(),
@@ -316,8 +326,8 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
     const isl: Island = {
       id: uid(),
       name: `Island ${n}`,
-      x: Math.round(design.room.width / 2 - 36),
-      y: Math.round(design.room.depth / 2 - 12),
+      x: Math.round(roomCenter(design.room).x - 36),
+      y: Math.round(roomCenter(design.room).y - 12),
       rotation: 0,
     };
     apply((d) => ({ ...d, islands: [...d.islands, isl] }));
@@ -362,8 +372,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
         .filter((it) => {
           const f = runFrame(design, it.run);
           if (!f) return false;
-          const r = itemRect(it, f);
-          return p.x >= r.x0 && p.x <= r.x1 && p.y >= r.y0 && p.y <= r.y1;
+          return insideQuad(p, itemQuad(it, f));
         });
       if (stack.length > 1) {
         const idx = stack.findIndex((it) => it.id === selectedId);
@@ -430,7 +439,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
           let next = snap(dr.startOffset + delta, 0.5);
           // magnetic snap to the wall ends and to neighboring pieces at the same height
           const cands = [0];
-          if (isWall(it.run)) cands.push(frame.length - it.width);
+          if (frame.kind === "wall") cands.push(frame.length - it.width);
           for (const o of d.items) {
             if (o.run !== it.run || o.id === it.id) continue;
             const overlapV = o.mountHeight < it.mountHeight + it.height && it.mountHeight < o.mountHeight + o.height;
@@ -524,7 +533,10 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
 
   const record: DesignRecord = { ...initial, ...meta, data: design, updated_at: new Date().toISOString() };
 
-  const runs = [...WALLS.map((w) => ({ id: w as string, label: `Wall ${w}` })), ...design.islands.map((i) => ({ id: i.id, label: i.name }))];
+  const runs = [
+    ...roomShape(design.room).walls.map((w) => ({ id: w.id, label: w.label, wall: true, open: !!w.open })),
+    ...design.islands.map((i) => ({ id: i.id, label: i.name, wall: false, open: false })),
+  ];
 
   // ---------- render ----------
   return (
@@ -583,7 +595,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
               <span className="field-label">{tab === "cabinets" ? "Add to" : "Add on"}</span>
               <div className="chips">
                 {runs
-                  .filter((r) => tab === "cabinets" || isWall(r.id))
+                  .filter((r) => tab === "cabinets" || (r.wall && !r.open))
                   .map((r) => (
                     <button
                       key={r.id}
@@ -615,7 +627,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
 
           {tab === "openings" && (
             <div className="panel-scroll">
-              <p className="muted">Adds to {runLabel(design, isWall(activeRunValid) ? activeRunValid : "A")}. Drag it into place or type the exact position.</p>
+              <p className="muted">Adds to {runLabel(design, isWall(design.room, activeRunValid) ? activeRunValid : firstWall)}. Drag it into place or type the exact position.</p>
               <div className="stack">
                 <button className="btn btn-secondary" onClick={() => addOpening("door")}>
                   Add door
@@ -632,7 +644,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
                 {design.openings.map((o) => (
                   <li key={o.id}>
                     <button className={`list-btn ${selectedId === o.id ? "list-on" : ""}`} onClick={() => setSelectedId(o.id)}>
-                      {o.type === "door" ? "Door" : o.type === "window" ? "Window" : "Doorway"} · Wall {o.wall} · {fmtIn(o.width)}
+                      {o.type === "door" ? "Door" : o.type === "window" ? "Window" : "Doorway"} · {wallLabel(design.room, o.wall)} · {fmtIn(o.width)}
                     </button>
                   </li>
                 ))}
@@ -643,13 +655,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
 
           {tab === "room" && (
             <div className="panel-scroll">
-              <div className="grid2">
-                <LengthInput id="room-w" label="Width (Walls A, C)" value={design.room.width} min={36} max={1200} onChange={(v) => apply((d) => ({ ...d, room: { ...d.room, width: v } }))} />
-                <LengthInput id="room-d" label="Depth (Walls B, D)" value={design.room.depth} min={36} max={1200} onChange={(v) => apply((d) => ({ ...d, room: { ...d.room, depth: v } }))} />
-                <LengthInput id="room-h" label="Ceiling height" value={design.room.ceiling} min={72} max={240} onChange={(v) => apply((d) => ({ ...d, room: { ...d.room, ceiling: v } }))} />
-                <LengthInput id="room-t" label="Wall thickness" value={design.room.wallThickness} min={2} max={16} onChange={(v) => apply((d) => ({ ...d, room: { ...d.room, wallThickness: v } }))} />
-              </div>
-              <p className="muted">Walls are lettered clockwise from the top of the top view. Each front view is drawn as if you stand in the room facing that wall.</p>
+              <RoomPanel design={design} apply={apply} flash={flash} selectedRun={activeRunValid} onSelectWall={(id) => setActiveRun(id)} />
               <h3 className="cat-title">Islands</h3>
               <ul className="list">
                 {design.islands.map((i) => (
@@ -905,7 +911,7 @@ function ItemInspector({
   item: PlacedItem;
   design: DesignData;
   catalog: Catalog;
-  runs: { id: string; label: string }[];
+  runs: { id: string; label: string; wall: boolean; open: boolean }[];
   update: (p: Partial<PlacedItem>) => void;
   swap: (p: Product) => void;
   remove: () => void;
@@ -923,7 +929,7 @@ function ItemInspector({
   const wallHung = item.mountHeight > 0;
   const hasDoors = !["drawer_base", "range", "dishwasher", "hood", "filler", "panel", "open_shelf", "wine_rack", "plate_rack"].includes(item.style);
   const isSided = ["blind_corner_base", "wall_blind_corner", "lazy_susan", "vanity_combo"].includes(item.style);
-  const rightGap = frame && isWall(item.run) ? frame.length - item.offset - item.width : null;
+  const rightGap = frame && frame.kind === "wall" ? frame.length - item.offset - item.width : null;
   const lineFinishes = catalog.finishes.filter((f) => f.line_id === product?.line_id);
   const otherFinishes = catalog.finishes.filter((f) => f.line_id !== product?.line_id);
 
@@ -950,7 +956,7 @@ function ItemInspector({
           }}
         >
           {runs
-            .filter((r) => isWall(r.id) || !wallHung)
+            .filter((r) => r.id === item.run || (r.wall && !r.open) || !wallHung)
             .map((r) => (
               <option key={r.id} value={r.id}>
                 {r.label}
@@ -1039,16 +1045,18 @@ function OpeningInspector({ op, design, update, remove }: { op: Opening; design:
     <div className="inspector">
       <div className="insp-head">
         <div className="insp-label">{op.type === "door" ? "Door" : op.type === "window" ? "Window" : "Open doorway"}</div>
-        <div className="muted">Wall {op.wall}</div>
+        <div className="muted">{wallLabel(design.room, op.wall)}</div>
       </div>
       <label className="field">
         <span className="field-label">Wall</span>
-        <select className="input" value={op.wall} onChange={(e) => update({ wall: e.target.value as Opening["wall"], offset: 0 })}>
-          {WALLS.map((w) => (
-            <option key={w} value={w}>
-              Wall {w}
-            </option>
-          ))}
+        <select className="input" value={op.wall} onChange={(e) => update({ wall: e.target.value, offset: 0 })}>
+          {roomShape(design.room)
+            .walls.filter((w) => !w.open || w.id === op.wall)
+            .map((w) => (
+              <option key={w.id} value={w.id}>
+                {w.label}
+              </option>
+            ))}
         </select>
       </label>
       <div className="grid2">
@@ -1090,18 +1098,18 @@ function IslandInspector({ island, update, remove }: { island: Island; update: (
         <input className="input" value={island.name} onChange={(e) => update({ name: e.target.value || "Island" })} />
       </label>
       <div className="grid2">
-        <LengthInput id="is-x" label="From Wall D" value={island.x} onChange={(v) => update({ x: v })} hint="Back left corner" />
-        <LengthInput id="is-y" label="From Wall A" value={island.y} onChange={(v) => update({ y: v })} />
+        <LengthInput id="is-x" label="Across from corner A" value={island.x} onChange={(v) => update({ x: v })} hint="Back left corner, measured from the left end of Wall A" />
+        <LengthInput id="is-y" label="Down from Wall A" value={island.y} onChange={(v) => update({ y: v })} />
       </div>
       <div className="field">
-        <span className="field-label">Cabinet fronts face</span>
+        <span className="field-label">Cabinet fronts face (in the top view)</span>
         <div className="chips">
           {(
             [
-              [0, "Wall C"],
-              [90, "Wall D"],
-              [180, "Wall A"],
-              [270, "Wall B"],
+              [0, "Down"],
+              [90, "Left"],
+              [180, "Up"],
+              [270, "Right"],
             ] as [Island["rotation"], string][]
           ).map(([r, label]) => (
             <button key={r} className={`chip ${island.rotation === r ? "chip-on" : ""}`} onClick={() => update({ rotation: r })}>
@@ -1283,4 +1291,18 @@ function PhotosPanel({
       </div>
     </div>
   );
+}
+
+function insideQuad(p: Vec, q: Vec[]): boolean {
+  let sign = 0;
+  for (let i = 0; i < q.length; i++) {
+    const a = q[i];
+    const b = q[(i + 1) % q.length];
+    const c = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+    if (Math.abs(c) < 1e-9) continue;
+    const s = Math.sign(c);
+    if (sign === 0) sign = s;
+    else if (s !== sign) return false;
+  }
+  return true;
 }
