@@ -1,6 +1,6 @@
 // Fill colors and image patterns shared by the top view and the front views.
 
-import type { Catalog, DesignData, PlacedItem } from "@/lib/types";
+import type { Catalog, DesignData, DoorStyle, Finish, PlacedItem } from "@/lib/types";
 
 export const STAINLESS = "#C9CCCE";
 export const LINE = "#1A1D1F";
@@ -27,31 +27,42 @@ export interface Paint {
   color: string; // solid color, always present
   fill: string; // pattern url when the finish has a photo, otherwise the color
   ink: string;
+  doorStyle: DoorStyle;
 }
 
 const isAppliance = (it: Pick<PlacedItem, "category">) => it.category === "appliance";
 
+/** The color a piece is drawn in: its own, else the design's, else the first color of its line. */
+export function finishFor(catalog: Catalog, design: DesignData, item: Pick<PlacedItem, "finishId" | "productId">): Finish | undefined {
+  const own = catalog.finishes.find((f) => f.id === item.finishId);
+  if (own) return own;
+  const designFinish = catalog.finishes.find((f) => f.id === design.finishId);
+  if (designFinish) return designFinish;
+  const product = catalog.products.find((p) => p.id === item.productId);
+  const lineId = product?.line_id ?? design.lineId;
+  return catalog.finishes.find((f) => f.line_id === lineId) ?? catalog.finishes[0];
+}
+
 export function finishPaint(catalog: Catalog, design: DesignData, item: PlacedItem): Paint {
-  if (isAppliance(item)) return { color: STAINLESS, fill: STAINLESS, ink: LINE };
-  const finish =
-    catalog.finishes.find((f) => f.id === item.finishId) ??
-    catalog.finishes.find((f) => f.id === design.finishId) ??
-    catalog.finishes[0];
-  if (!finish) return { color: "#E8E6E0", fill: "#E8E6E0", ink: LINE };
+  if (isAppliance(item)) return { color: STAINLESS, fill: STAINLESS, ink: LINE, doorStyle: "slab" };
+  const finish = finishFor(catalog, design, item);
+  if (!finish) return { color: "#E8E6E0", fill: "#E8E6E0", ink: LINE, doorStyle: "shaker" };
   return {
     color: finish.color_hex,
-    fill: finish.image_url ? `url(#fin-${finish.id})` : finish.color_hex,
+    fill: finish.image_url && finish.fill_mode === "photo" ? `url(#fin-${finish.id})` : finish.color_hex,
     ink: inkOn(finish.color_hex),
+    doorStyle: finish.door_style,
   };
 }
 
 export function counterPaint(catalog: Catalog, design: DesignData): Paint {
   const top = catalog.countertops.find((c) => c.id === design.countertopId) ?? catalog.countertops[0];
-  if (!top) return { color: "#EEEDEA", fill: "#EEEDEA", ink: LINE };
+  if (!top) return { color: "#EEEDEA", fill: "#EEEDEA", ink: LINE, doorStyle: "slab" };
   return {
     color: top.color_hex,
     fill: top.image_url ? `url(#ctr-${top.id})` : top.color_hex,
     ink: inkOn(top.color_hex),
+    doorStyle: "slab",
   };
 }
 
@@ -60,7 +71,7 @@ export function PaintDefs({ catalog }: { catalog: Catalog }) {
   return (
     <defs>
       {catalog.finishes
-        .filter((f) => f.image_url)
+        .filter((f) => f.image_url && f.fill_mode === "photo")
         .map((f) => (
           <pattern key={f.id} id={`fin-${f.id}`} patternUnits="userSpaceOnUse" width={24} height={24}>
             <rect width={24} height={24} fill={f.color_hex} />

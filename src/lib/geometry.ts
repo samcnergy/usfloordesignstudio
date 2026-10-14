@@ -214,8 +214,9 @@ function num(v: number): string {
   return Number.isInteger(v) ? String(v) : String(Math.round(v * 100) / 100).replace(/^0\./, ".");
 }
 
-/** Shop label, e.g. B24, W3030, P2484, REF36. */
-export function itemLabel(item: Pick<PlacedItem, "code" | "style" | "category" | "width" | "height">): string {
+/** Shop label: the SKU for catalog products (B12, W3036, UT188424); built from the size for older designs. */
+export function itemLabel(item: Pick<PlacedItem, "code" | "style" | "category" | "width" | "height"> & { productId?: string }): string {
+  if (item.productId) return item.code;
   if (item.style === "panel") return `${item.code}${num(item.height)}`;
   const showHeight = item.category === "wall" || item.category === "tall" || (item.category === "filler" && item.height !== 34.5);
   return `${item.code}${num(item.width)}${showHeight ? num(item.height) : ""}`;

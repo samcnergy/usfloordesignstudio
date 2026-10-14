@@ -2,25 +2,31 @@
 // code serves Server Components and the browser.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Catalog, CatalogCabinet, Countertop, DesignData, DesignRecord, Finish } from "./types";
+import type { Catalog, Countertop, DesignData, DesignRecord, Finish, Manufacturer, Product, ProductLine } from "./types";
 import { emptyDesign } from "./types";
 
-const num = (v: unknown) => (typeof v === "string" ? parseFloat(v) : (v as number));
-const nums = (v: unknown) => ((v as unknown[]) ?? []).map(num);
+const num = (v: unknown) => (v === null || v === undefined ? null : typeof v === "string" ? parseFloat(v) : (v as number));
 
-function toCabinet(r: Record<string, unknown>): CatalogCabinet {
+function toProduct(r: Record<string, unknown>): Product {
   return {
     id: r.id as string,
-    code: r.code as string,
+    line_id: r.line_id as string,
+    sku: r.sku as string,
     name: r.name as string,
-    category: r.category as CatalogCabinet["category"],
-    style: r.style as CatalogCabinet["style"],
-    widths: nums(r.widths),
-    heights: nums(r.heights),
-    default_height: num(r.default_height),
+    description: (r.description as string) ?? null,
+    category: r.category as Product["category"],
+    style: r.style as Product["style"],
+    width: num(r.width),
+    height: num(r.height),
     depth: num(r.depth),
-    mount_height: r.mount_height === null ? null : num(r.mount_height),
+    mount_height: num(r.mount_height),
+    doors: (r.doors as number) ?? 0,
+    drawers: (r.drawers as number) ?? 0,
+    shelves: (r.shelves as number) ?? 0,
+    split_height: num(r.split_height),
+    placeable: r.placeable as boolean,
     image_url: (r.image_url as string) ?? null,
+    source_url: (r.source_url as string) ?? null,
     sort: r.sort as number,
     active: r.active as boolean,
   };
@@ -29,10 +35,14 @@ function toCabinet(r: Record<string, unknown>): CatalogCabinet {
 function toFinish(r: Record<string, unknown>): Finish {
   return {
     id: r.id as string,
+    line_id: (r.line_id as string) ?? null,
     name: r.name as string,
     vendor: (r.vendor as string) ?? null,
     color_hex: r.color_hex as string,
     image_url: (r.image_url as string) ?? null,
+    source_url: (r.source_url as string) ?? null,
+    door_style: (r.door_style as Finish["door_style"]) ?? "shaker",
+    fill_mode: (r.fill_mode as Finish["fill_mode"]) ?? "color",
     sort: r.sort as number,
     active: r.active as boolean,
   };
@@ -44,25 +54,41 @@ function toCountertop(r: Record<string, unknown>): Countertop {
     name: r.name as string,
     color_hex: r.color_hex as string,
     image_url: (r.image_url as string) ?? null,
-    thickness: num(r.thickness),
+    thickness: num(r.thickness) ?? 1.5,
     sort: r.sort as number,
     active: r.active as boolean,
   };
 }
 
+/** PostgREST returns at most 1000 rows per request, so large tables are read in pages. */
+async function selectAll(sb: SupabaseClient, table: string, order: string[]): Promise<Record<string, unknown>[]> {
+  const out: Record<string, unknown>[] = [];
+  const page = 1000;
+  for (let from = 0; ; from += page) {
+    let q = sb.from(table).select("*");
+    for (const o of order) q = q.order(o);
+    const { data, error } = await q.range(from, from + page - 1);
+    if (error) throw error;
+    out.push(...(data ?? []));
+    if (!data || data.length < page) break;
+  }
+  return out;
+}
+
 export async function loadCatalog(sb: SupabaseClient): Promise<Catalog> {
-  const [c, f, t] = await Promise.all([
-    sb.from("ds_cabinets").select("*").order("sort").order("code"),
-    sb.from("ds_finishes").select("*").order("sort").order("name"),
-    sb.from("ds_countertops").select("*").order("sort").order("name"),
+  const [m, l, p, f, t] = await Promise.all([
+    selectAll(sb, "ds_manufacturers", ["sort", "name"]),
+    selectAll(sb, "ds_product_lines", ["sort", "name"]),
+    selectAll(sb, "ds_products", ["sort", "sku"]),
+    selectAll(sb, "ds_finishes", ["sort", "name"]),
+    selectAll(sb, "ds_countertops", ["sort", "name"]),
   ]);
-  if (c.error) throw c.error;
-  if (f.error) throw f.error;
-  if (t.error) throw t.error;
   return {
-    cabinets: (c.data ?? []).map(toCabinet),
-    finishes: (f.data ?? []).map(toFinish),
-    countertops: (t.data ?? []).map(toCountertop),
+    manufacturers: m as unknown as Manufacturer[],
+    lines: l as unknown as ProductLine[],
+    products: p.map(toProduct),
+    finishes: f.map(toFinish),
+    countertops: t.map(toCountertop),
   };
 }
 
@@ -88,6 +114,8 @@ function normalizeData(raw: unknown): DesignData {
     openings: d.openings ?? [],
     items: d.items ?? [],
     photos: d.photos ?? [],
+    extras: d.extras ?? [],
+    lineId: d.lineId ?? null,
   };
 }
 

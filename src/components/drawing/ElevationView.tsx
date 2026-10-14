@@ -23,12 +23,12 @@ export interface ViewProps {
   className?: string;
 }
 
-const COUNTER_STYLES = new Set(["base", "drawer_base", "sink_base", "blind_corner_base", "dishwasher"]);
+const COUNTER_STYLES = new Set(["base", "drawer_base", "sink_base", "blind_corner_base", "lazy_susan", "open_shelf", "vanity_combo", "dishwasher"]);
 const BASE_TOP = 34.5;
 
 function counterRuns(items: PlacedItem[]): [number, number][] {
   const spans = items
-    .filter((i) => COUNTER_STYLES.has(i.style) && i.mountHeight === 0)
+    .filter((i) => COUNTER_STYLES.has(i.style) && i.mountHeight === 0 && Math.abs(i.height - BASE_TOP) < 0.01)
     .map((i) => [i.offset, i.offset + i.width] as [number, number])
     .sort((a, b) => a[0] - b[0]);
   const merged: [number, number][] = [];

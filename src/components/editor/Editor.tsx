@@ -10,7 +10,7 @@ import { ElevationView, type DrawTarget } from "@/components/drawing/ElevationVi
 import { PlanView } from "@/components/drawing/PlanView";
 import { PrintSheet } from "@/components/print/PrintSheet";
 import { findProblems, firstFreeOffset, isWall, itemLabel, itemRect, runFrame, runLabel, wallLength } from "@/lib/geometry";
-import type { Catalog, CatalogCabinet, Category, DesignData, DesignRecord, Island, Opening, OpeningType, PlacedItem } from "@/lib/types";
+import type { Catalog, Category, DesignData, DesignRecord, ExtraItem, Island, Opening, OpeningType, PlacedItem, Product, ProductLine } from "@/lib/types";
 import { WALLS } from "@/lib/types";
 import { useHistory } from "@/lib/useHistory";
 import { fmtIn, snap } from "@/lib/units";
@@ -24,9 +24,25 @@ const CATEGORY_LABEL: Record<Category, string> = {
   base: "Base cabinets",
   wall: "Wall cabinets",
   tall: "Tall cabinets",
+  vanity: "Vanities",
+  filler: "Fillers",
+  panel: "Panels",
   appliance: "Appliances",
-  filler: "Fillers and panels",
+  accessory: "Order items (not drawn)",
 };
+const CATEGORY_ORDER: Category[] = ["base", "wall", "tall", "vanity", "filler", "panel", "appliance", "accessory"];
+
+/** "Top King American Style", or just the line name for the generic appliance line. */
+export function lineTitle(catalog: Catalog, line: ProductLine | undefined): string {
+  if (!line) return "";
+  const maker = catalog.manufacturers.find((m) => m.id === line.manufacturer_id);
+  return maker && maker.name !== "Generic" ? `${maker.name} ${line.name}` : line.name;
+}
+
+function dims(p: Pick<Product, "width" | "height" | "depth">): string {
+  if (p.width === null) return "";
+  return [p.width, p.height, p.depth].map((v) => (v === null ? "?" : fmtIn(v, false))).join(" x ");
+}
 
 const uid = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Math.random().toString(36).slice(2));
 
@@ -59,12 +75,24 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
 
   const activeCatalog = useMemo<Catalog>(
     () => ({
-      cabinets: catalog.cabinets.filter((c) => c.active),
+      manufacturers: catalog.manufacturers.filter((m) => m.active),
+      lines: catalog.lines.filter((l) => l.active),
+      products: catalog.products.filter((p) => p.active),
       finishes: catalog.finishes.filter((f) => f.active),
       countertops: catalog.countertops.filter((c) => c.active),
     }),
     [catalog],
   );
+
+  // cabinet lines are the lines with something other than appliances in them
+  const cabinetLines = useMemo(
+    () => activeCatalog.lines.filter((l) => activeCatalog.products.some((p) => p.line_id === l.id && p.category !== "appliance")),
+    [activeCatalog],
+  );
+  const designLineId = design.lineId && cabinetLines.some((l) => l.id === design.lineId) ? design.lineId : (cabinetLines[0]?.id ?? null);
+  const [pickerLine, setPickerLine] = useState<string | null>(null);
+  const pickerLineId = pickerLine && activeCatalog.lines.some((l) => l.id === pickerLine) ? pickerLine : designLineId;
+  const [search, setSearch] = useState("");
 
   const problems = useMemo(() => findProblems(design), [design]);
   const problemIds = useMemo(() => new Set(problems.flatMap((p) => p.ids)), [problems]);
@@ -139,16 +167,21 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
     setSelectedId(null);
   }, [apply, selectedId]);
 
-  const addCabinet = (cab: CatalogCabinet, width: number) => {
+  const addProduct = (p: Product) => {
+    if (!p.placeable || p.width === null || p.height === null || p.depth === null) {
+      addExtra(p);
+      return;
+    }
     const run = activeRunValid;
-    if (!isWall(run) && (cab.category === "wall" || cab.style === "hood" || (cab.mount_height ?? 0) > 0)) {
+    const mount = p.mount_height ?? 0;
+    if (!isWall(run) && (p.category === "wall" || p.style === "hood" || mount > 0)) {
       flash("Wall-hung pieces go on a wall. Pick Wall A to D first.");
       return;
     }
-    const height = cab.default_height;
-    const mount = cab.mount_height ?? 0;
+    const width = p.width;
+    const height = p.height;
     let offset = firstFreeOffset(design, run, width, [mount, mount + height]);
-    if (cab.style === "hood") {
+    if (p.style === "hood") {
       // center a new hood over the first range on this run that has no hood yet
       const hoods = design.items.filter((i) => i.run === run && i.style === "hood");
       const range = design.items
@@ -157,25 +190,108 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
         .find((r) => !hoods.some((h) => h.offset < r.offset + r.width && r.offset < h.offset + h.width));
       if (range) offset = range.offset + (range.width - width) / 2;
     }
+    const line = activeCatalog.lines.find((l) => l.id === p.line_id);
     const item: PlacedItem = {
       id: uid(),
-      cabinetId: cab.id,
-      code: cab.code,
-      name: cab.name,
-      category: cab.category,
-      style: cab.style,
+      productId: p.id,
+      code: p.sku,
+      name: p.name,
+      lineName: lineTitle(activeCatalog, line),
+      category: p.category,
+      style: p.style,
       run,
       offset,
       width,
       height,
-      depth: cab.depth,
+      depth: p.depth,
       mountHeight: mount,
+      doors: p.doors,
+      drawers: p.drawers,
+      splitHeight: p.split_height,
       finishId: null,
       hinge: "left",
     };
-    apply((d) => ({ ...d, items: [...d.items, item] }));
+    apply((d) => ({
+      ...d,
+      items: [...d.items, item],
+      // the first cabinet sets the design's line if none was chosen yet
+      lineId: d.lineId ?? (p.category !== "appliance" ? p.line_id : d.lineId),
+    }));
     setSelectedId(item.id);
     if (isWall(run) && offset + width > wallLength(design.room, run)) flash(`No room left on Wall ${run}. The piece is placed past the end; move or resize it.`);
+  };
+
+  /** Change the design's cabinet line and move every placed cabinet to the same SKU in that line where it exists. */
+  const switchLine = (lineId: string) => {
+    const line = activeCatalog.lines.find((l) => l.id === lineId);
+    const first = activeCatalog.finishes.find((f) => f.line_id === lineId);
+    const missing: string[] = [];
+    let moved = 0;
+    const items = design.items.map((it) => {
+      const prod = activeCatalog.products.find((p) => p.id === it.productId);
+      if (!prod || prod.category === "appliance" || prod.line_id === lineId) return it;
+      const match = activeCatalog.products.find((p) => p.line_id === lineId && p.placeable && p.sku.toUpperCase() === prod.sku.toUpperCase());
+      if (!match || match.width === null || match.height === null || match.depth === null) {
+        missing.push(prod.sku);
+        return it;
+      }
+      moved++;
+      return {
+        ...it,
+        productId: match.id,
+        code: match.sku,
+        name: match.name,
+        lineName: lineTitle(activeCatalog, line),
+        category: match.category,
+        style: match.style,
+        width: match.width,
+        height: match.height,
+        depth: match.depth,
+        doors: match.doors,
+        drawers: match.drawers,
+        splitHeight: match.split_height,
+        finishId: null,
+      };
+    });
+    apply((d) => ({ ...d, lineId, finishId: first?.id ?? d.finishId, items }));
+    setPickerLine(lineId);
+    if (moved || missing.length) {
+      const uniq = [...new Set(missing)];
+      flash(
+        `${moved} piece${moved === 1 ? "" : "s"} moved to ${line?.name ?? "the new line"}.` +
+          (uniq.length ? ` No match for ${uniq.slice(0, 6).join(", ")}${uniq.length > 6 ? "..." : ""}; those stay as they were. Pick replacements from Other sizes.` : ""),
+      );
+    }
+  };
+
+  const addExtra = (p: Product) => {
+    const line = activeCatalog.lines.find((l) => l.id === p.line_id);
+    apply((d) => {
+      const existing = d.extras.find((x) => x.productId === p.id && x.finishId === null);
+      if (existing) return { ...d, extras: d.extras.map((x) => (x === existing ? { ...x, qty: x.qty + 1 } : x)) };
+      const extra: ExtraItem = { id: uid(), productId: p.id, code: p.sku, name: p.name, lineName: lineTitle(activeCatalog, line), qty: 1, finishId: null };
+      return { ...d, extras: [...d.extras, extra] };
+    });
+    flash(`${p.sku} added to the order list. It prints with the cabinet list but is not drawn.`);
+  };
+
+  /** Swap a placed piece for another catalog product, keeping its place in the run. */
+  const swapProduct = (item: PlacedItem, p: Product) => {
+    if (p.width === null || p.height === null || p.depth === null) return;
+    updateItem(item.id, {
+      productId: p.id,
+      code: p.sku,
+      name: p.name,
+      category: p.category,
+      style: p.style,
+      width: p.width,
+      height: p.height,
+      depth: p.depth,
+      doors: p.doors,
+      drawers: p.drawers,
+      splitHeight: p.split_height,
+      mountHeight: p.mount_height ?? (item.mountHeight > 0 && p.category === "wall" ? item.mountHeight : 0),
+    });
   };
 
   const addOpening = (type: OpeningType) => {
@@ -485,43 +601,16 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
           )}
 
           {tab === "cabinets" && (
-            <div className="panel-scroll">
-              {(Object.keys(CATEGORY_LABEL) as Category[]).map((cat) => {
-                const cabs = activeCatalog.cabinets.filter((c) => c.category === cat).sort((a, b) => a.sort - b.sort);
-                if (!cabs.length) return null;
-                return (
-                  <section key={cat} className="cat-group">
-                    <h3 className="cat-title">{CATEGORY_LABEL[cat]}</h3>
-                    {cabs.map((c) => (
-                      <div key={c.id} className="cat-card">
-                        <div className="cat-head">
-                          {c.image_url ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={c.image_url} alt="" className="cat-thumb" />
-                          ) : (
-                            <span className="cat-code">{c.code}</span>
-                          )}
-                          <div>
-                            <div className="cat-name">{c.name}</div>
-                            <div className="cat-sub">
-                              {fmtIn(c.depth)} deep{c.mount_height ? ` · hung at ${fmtIn(c.mount_height)}` : ""}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="chips chips-sizes">
-                          {c.widths.map((w) => (
-                            <button key={w} className="chip chip-size" onClick={() => addCabinet(c, w)} title={`Add ${c.code}${w} to ${runLabel(design, activeRunValid)}`}>
-                              {fmtIn(w, false)}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </section>
-                );
-              })}
-              {!activeCatalog.cabinets.length && <p className="muted">The catalog is empty. Add cabinets on the Catalog page.</p>}
-            </div>
+            <ProductPicker
+              catalog={activeCatalog}
+              lines={cabinetLines}
+              lineId={pickerLineId}
+              onLine={setPickerLine}
+              search={search}
+              onSearch={setSearch}
+              onAdd={addProduct}
+              target={runLabel(design, activeRunValid)}
+            />
           )}
 
           {tab === "openings" && (
@@ -677,6 +766,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
               catalog={activeCatalog}
               runs={runs}
               update={(patch) => updateItem(selectedItem.id, patch)}
+              swap={(p) => swapProduct(selectedItem, p)}
               remove={removeSelected}
               duplicate={() => {
                 const copy: PlacedItem = { ...selectedItem, id: uid() };
@@ -690,7 +780,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
           ) : selectedIsland ? (
             <IslandInspector key={selectedIsland.id} island={selectedIsland} update={(patch) => updateIsland(selectedIsland.id, patch)} remove={removeSelected} />
           ) : (
-            <DesignInspector design={design} catalog={activeCatalog} apply={apply} />
+            <DesignInspector design={design} catalog={activeCatalog} cabinetLines={cabinetLines} lineId={designLineId} apply={apply} onLine={switchLine} />
           )}
         </aside>
       </div>
@@ -706,6 +796,98 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
 
 // ---------------------------------------------------------------------------
 
+function ProductPicker({
+  catalog,
+  lines,
+  lineId,
+  onLine,
+  search,
+  onSearch,
+  onAdd,
+  target,
+}: {
+  catalog: Catalog;
+  lines: ProductLine[];
+  lineId: string | null;
+  onLine: (id: string) => void;
+  search: string;
+  onSearch: (s: string) => void;
+  onAdd: (p: Product) => void;
+  target: string;
+}) {
+  const [open, setOpen] = useState<Set<Category>>(new Set(["base"]));
+  const q = search.trim().toLowerCase();
+  const inLine = catalog.products.filter((p) => p.line_id === lineId || (p.category === "appliance" && catalog.lines.find((l) => l.id === p.line_id)?.id !== lineId));
+  const matches = q
+    ? inLine.filter((p) => p.sku.toLowerCase().includes(q) || p.name.toLowerCase().includes(q) || (p.description ?? "").toLowerCase().includes(q))
+    : inLine;
+  const sorted = [...matches].sort((a, b) => a.sort - b.sort || a.sku.localeCompare(b.sku, undefined, { numeric: true }));
+  const line = catalog.lines.find((l) => l.id === lineId);
+
+  return (
+    <div className="panel-scroll">
+      <label className="field">
+        <span className="field-label">Cabinet line</span>
+        <select className="input" value={lineId ?? ""} onChange={(e) => onLine(e.target.value)}>
+          {lines.map((l) => (
+            <option key={l.id} value={l.id}>
+              {lineTitle(catalog, l)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <input className="input" type="search" placeholder="Search SKU or name, e.g. W3036" value={search} onChange={(e) => onSearch(e.target.value)} aria-label="Search products" />
+      {!lines.length && <p className="muted">No cabinets in the catalog yet. An admin can add them under Catalog &gt; Import.</p>}
+      {CATEGORY_ORDER.map((cat) => {
+        const list = sorted.filter((p) => p.category === cat);
+        if (!list.length) return null;
+        const isOpen = q !== "" || open.has(cat);
+        return (
+          <section key={cat} className="cat-group">
+            <button
+              className="cat-title cat-toggle"
+              aria-expanded={isOpen}
+              onClick={() =>
+                setOpen((s) => {
+                  const n = new Set(s);
+                  if (n.has(cat)) n.delete(cat);
+                  else n.add(cat);
+                  return n;
+                })
+              }
+            >
+              <span>{CATEGORY_LABEL[cat]}</span>
+              <span className="muted">
+                {list.length} {isOpen ? "\u2212" : "+"}
+              </span>
+            </button>
+            {isOpen && (
+              <div className="prod-list">
+                {list.map((p) => (
+                  <button key={p.id} className="prod-row" onClick={() => onAdd(p)} title={`${p.description ?? p.name}\n${p.placeable ? `Click to add to ${target}` : "Click to add to the order list"}`}>
+                    {p.image_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={p.image_url} alt="" className="prod-thumb" loading="lazy" />
+                    ) : (
+                      <span className="prod-thumb prod-thumb-empty">{p.sku.slice(0, 3)}</span>
+                    )}
+                    <span className="prod-text">
+                      <span className="prod-sku">{p.sku}</span>
+                      <span className="prod-name">{p.name}</span>
+                    </span>
+                    <span className="prod-dims tabular">{dims(p)}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+        );
+      })}
+      {q && !sorted.length && <p className="muted">Nothing in {lineTitle(catalog, line)} matches &quot;{search}&quot;.</p>}
+    </div>
+  );
+}
+
 function Swatch({ color, image, size = 22 }: { color: string; image: string | null; size?: number }) {
   return <span className="swatch" style={{ width: size, height: size, background: image ? `center / cover url(${image})` : color }} />;
 }
@@ -716,6 +898,7 @@ function ItemInspector({
   catalog,
   runs,
   update,
+  swap,
   remove,
   duplicate,
 }: {
@@ -724,23 +907,35 @@ function ItemInspector({
   catalog: Catalog;
   runs: { id: string; label: string }[];
   update: (p: Partial<PlacedItem>) => void;
+  swap: (p: Product) => void;
   remove: () => void;
   duplicate: () => void;
 }) {
-  const cab = catalog.cabinets.find((c) => c.id === item.cabinetId);
-  const widths = cab?.widths ?? [item.width];
-  const heights = cab?.heights ?? [item.height];
+  const product = catalog.products.find((p) => p.id === item.productId);
+  const line = catalog.lines.find((l) => l.id === product?.line_id);
+  // other sizes of the same kind of piece in the same line, for a one-click swap
+  const siblings = product
+    ? catalog.products
+        .filter((p) => p.line_id === product.line_id && p.style === product.style && p.category === product.category && p.placeable && p.width !== null)
+        .sort((a, b) => (a.height ?? 0) - (b.height ?? 0) || (a.width ?? 0) - (b.width ?? 0) || a.sku.localeCompare(b.sku))
+    : [];
   const frame = runFrame(design, item.run);
   const wallHung = item.mountHeight > 0;
-  const hasDoors = !["drawer_base", "range", "dishwasher", "hood", "filler", "panel"].includes(item.style);
-  const isBlind = item.style === "blind_corner_base" || item.style === "wall_blind_corner";
+  const hasDoors = !["drawer_base", "range", "dishwasher", "hood", "filler", "panel", "open_shelf", "wine_rack", "plate_rack"].includes(item.style);
+  const isSided = ["blind_corner_base", "wall_blind_corner", "lazy_susan", "vanity_combo"].includes(item.style);
   const rightGap = frame && isWall(item.run) ? frame.length - item.offset - item.width : null;
+  const lineFinishes = catalog.finishes.filter((f) => f.line_id === product?.line_id);
+  const otherFinishes = catalog.finishes.filter((f) => f.line_id !== product?.line_id);
 
   return (
     <div className="inspector">
       <div className="insp-head">
         <div className="insp-label">{itemLabel(item)}</div>
-        <div className="muted">{item.name}</div>
+        <div className="muted">
+          {item.name}
+          {line ? ` · ${lineTitle(catalog, line)}` : item.lineName ? ` · ${item.lineName}` : ""}
+        </div>
+        {product?.description && <div className="insp-desc">{product.description}</div>}
       </div>
 
       <label className="field">
@@ -764,23 +959,18 @@ function ItemInspector({
         </select>
       </label>
 
-      <div className="field">
-        <span className="field-label">Width</span>
-        <div className="chips">
-          {widths.map((w) => (
-            <button key={w} className={`chip chip-size ${item.width === w ? "chip-on" : ""}`} onClick={() => update({ width: w })}>
-              {fmtIn(w, false)}
-            </button>
-          ))}
-        </div>
-      </div>
-      {heights.length > 1 && (
+      {siblings.length > 1 && (
         <div className="field">
-          <span className="field-label">Height</span>
+          <span className="field-label">Other sizes</span>
           <div className="chips">
-            {heights.map((h) => (
-              <button key={h} className={`chip chip-size ${item.height === h ? "chip-on" : ""}`} onClick={() => update({ height: h })}>
-                {fmtIn(h, false)}
+            {siblings.map((p) => (
+              <button
+                key={p.id}
+                className={`chip chip-size ${p.id === item.productId ? "chip-on" : ""}`}
+                onClick={() => swap(p)}
+                title={`${p.name}: ${dims(p)}`}
+              >
+                {p.sku}
               </button>
             ))}
           </div>
@@ -798,9 +988,11 @@ function ItemInspector({
         )}
       </div>
 
-      {(hasDoors || isBlind) && (
+      {(hasDoors || isSided) && (
         <div className="field">
-          <span className="field-label">{isBlind ? "Blind side" : "Hinge side (single door)"}</span>
+          <span className="field-label">
+            {item.style === "vanity_combo" ? "Drawer side" : isSided ? "Corner (blind) side" : "Hinge side (single door)"}
+          </span>
           <div className="chips">
             {(["left", "right"] as const).map((h) => (
               <button key={h} className={`chip ${item.hinge === h ? "chip-on" : ""}`} onClick={() => update({ hinge: h })}>
@@ -819,7 +1011,7 @@ function ItemInspector({
               <span className="swatch swatch-default">All</span>
               <span>Same as design</span>
             </button>
-            {catalog.finishes.map((f) => (
+            {(lineFinishes.length ? lineFinishes : otherFinishes).map((f) => (
               <button key={f.id} className={`swatch-btn ${item.finishId === f.id ? "swatch-on" : ""}`} onClick={() => update({ finishId: f.id })}>
                 <Swatch color={f.color_hex} image={f.image_url} />
                 <span>{f.name}</span>
@@ -927,8 +1119,24 @@ function IslandInspector({ island, update, remove }: { island: Island; update: (
   );
 }
 
-function DesignInspector({ design, catalog, apply }: { design: DesignData; catalog: Catalog; apply: (fn: (d: DesignData) => DesignData) => void }) {
-  const finishId = design.finishId ?? catalog.finishes[0]?.id ?? null;
+function DesignInspector({
+  design,
+  catalog,
+  cabinetLines,
+  lineId,
+  apply,
+  onLine,
+}: {
+  design: DesignData;
+  catalog: Catalog;
+  cabinetLines: ProductLine[];
+  lineId: string | null;
+  apply: (fn: (d: DesignData) => DesignData) => void;
+  onLine: (id: string) => void;
+}) {
+  const lineFinishes = catalog.finishes.filter((f) => f.line_id === lineId);
+  const finishes = lineFinishes.length ? lineFinishes : catalog.finishes;
+  const finishId = design.finishId && finishes.some((f) => f.id === design.finishId) ? design.finishId : (finishes[0]?.id ?? null);
   const counterId = design.countertopId ?? catalog.countertops[0]?.id ?? null;
   return (
     <div className="inspector">
@@ -936,11 +1144,27 @@ function DesignInspector({ design, catalog, apply }: { design: DesignData; catal
         <div className="insp-label">Design</div>
         <div className="muted">Click a piece to edit it. Click a wall letter to choose where new pieces go.</div>
       </div>
+      {cabinetLines.length > 0 && (
+        <label className="field">
+          <span className="field-label">Cabinet line</span>
+          <select
+            className="input"
+            value={lineId ?? ""}
+            onChange={(e) => onLine(e.target.value)}
+          >
+            {cabinetLines.map((l) => (
+              <option key={l.id} value={l.id}>
+                {lineTitle(catalog, l)}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <div className="field">
         <span className="field-label">Cabinet color</span>
         <div className="swatch-grid">
-          {catalog.finishes.map((f) => (
-            <button key={f.id} className={`swatch-btn ${finishId === f.id ? "swatch-on" : ""}`} onClick={() => apply((d) => ({ ...d, finishId: f.id }))}>
+          {finishes.map((f) => (
+            <button key={f.id} className={`swatch-btn ${finishId === f.id ? "swatch-on" : ""}`} onClick={() => apply((d) => ({ ...d, finishId: f.id, lineId: d.lineId ?? f.line_id }))}>
               <Swatch color={f.color_hex} image={f.image_url} />
               <span>{f.name}</span>
             </button>
@@ -958,12 +1182,41 @@ function DesignInspector({ design, catalog, apply }: { design: DesignData; catal
           ))}
         </div>
       </div>
+      {design.extras.length > 0 && (
+        <div className="field">
+          <span className="field-label">Order items (not drawn)</span>
+          <ul className="extras">
+            {design.extras.map((x) => (
+              <li key={x.id}>
+                <span className="extras-name">
+                  <b>{x.code}</b> {x.name}
+                </span>
+                <span className="extras-qty">
+                  <button className="chip" aria-label={`One less ${x.code}`} onClick={() => apply((d) => ({ ...d, extras: d.extras.map((e) => (e.id === x.id ? { ...e, qty: Math.max(1, e.qty - 1) } : e)) }))}>
+                    {"\u2212"}
+                  </button>
+                  <span className="tabular">{x.qty}</span>
+                  <button className="chip" aria-label={`One more ${x.code}`} onClick={() => apply((d) => ({ ...d, extras: d.extras.map((e) => (e.id === x.id ? { ...e, qty: e.qty + 1 } : e)) }))}>
+                    +
+                  </button>
+                  <button className="chip" aria-label={`Remove ${x.code}`} onClick={() => apply((d) => ({ ...d, extras: d.extras.filter((e) => e.id !== x.id) }))}>
+                    Remove
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="insp-stats">
         <div>
-          <b className="tabular">{design.items.filter((i) => i.category !== "appliance").length}</b> cabinets and fillers
+          <b className="tabular">{design.items.filter((i) => i.category !== "appliance").length}</b> cabinets, fillers and panels
         </div>
         <div>
           <b className="tabular">{design.items.filter((i) => i.category === "appliance").length}</b> appliances
+        </div>
+        <div>
+          <b className="tabular">{design.extras.reduce((n, x) => n + x.qty, 0)}</b> order items
         </div>
       </div>
     </div>

@@ -19,7 +19,11 @@ function chunk<T>(arr: T[], n: number): T[][] {
 export function PrintSheet({ record, catalog }: { record: DesignRecord; catalog: Catalog }) {
   const design = record.data;
   const schedule = buildSchedule(catalog, design);
-  const finish = catalog.finishes.find((f) => f.id === design.finishId) ?? catalog.finishes[0];
+  const designLine = catalog.lines.find((l) => l.id === design.lineId);
+  const finish =
+    catalog.finishes.find((f) => f.id === design.finishId) ?? catalog.finishes.find((f) => f.line_id === design.lineId) ?? catalog.finishes[0];
+  const finishLine = catalog.lines.find((l) => l.id === (finish?.line_id ?? designLine?.id));
+  const maker = catalog.manufacturers.find((m) => m.id === finishLine?.manufacturer_id);
   const counter = catalog.countertops.find((c) => c.id === design.countertopId) ?? catalog.countertops[0];
   const runs = [
     ...WALLS.filter((w) => design.items.some((i) => i.run === w) || design.openings.some((o) => o.wall === w)),
@@ -96,6 +100,15 @@ export function PrintSheet({ record, catalog }: { record: DesignRecord; catalog:
                     <b>Cabinets</b>
                     <br />
                     {finish.name}
+                    {finishLine && (
+                      <>
+                        <br />
+                        <span className="sheet-small">
+                          {maker && maker.name !== "Generic" ? `${maker.name} ` : ""}
+                          {finishLine.name}
+                        </span>
+                      </>
+                    )}
                   </span>
                 </div>
               )}
@@ -121,7 +134,7 @@ export function PrintSheet({ record, catalog }: { record: DesignRecord; catalog:
               </thead>
               <tbody>
                 {schedule.map((r) => (
-                  <tr key={`${r.label}-${r.finish}-${r.size}`}>
+                  <tr key={`${r.label}-${r.line}-${r.finish}-${r.size}-${r.locations}`}>
                     <td className="tabular">{r.qty}</td>
                     <td className="tabular">
                       <b>{r.label}</b>
@@ -129,7 +142,7 @@ export function PrintSheet({ record, catalog }: { record: DesignRecord; catalog:
                     <td>
                       {r.description}
                       <div className="sheet-small">
-                        {r.size} · {r.locations}
+                        {[r.size, r.line, r.locations].filter(Boolean).join(" · ")}
                       </div>
                     </td>
                     <td>{r.finish}</td>
