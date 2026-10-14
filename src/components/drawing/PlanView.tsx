@@ -1,0 +1,195 @@
+"use client";
+
+// Top view of the room: walls, doors, windows, islands and every placed piece.
+// Wall-hung pieces are drawn dashed over the floor pieces, the usual plan convention.
+
+import type { PointerEvent as ReactPointerEvent } from "react";
+import type { Opening, PlacedItem } from "@/lib/types";
+import { WALLS } from "@/lib/types";
+import { allFrames, islandFrame, islandRect, itemLabel, itemRect, pointOn, runRect, wallFrame, type RunFrame } from "@/lib/geometry";
+import { fmtFtIn, fmtIn } from "@/lib/units";
+import { DimH, DimV } from "./dims";
+import type { DrawTarget, ViewProps } from "./ElevationView";
+import { PROBLEM, PaintDefs, SELECT, finishPaint } from "./paint";
+
+function rectPath(r: { x0: number; y0: number; x1: number; y1: number }) {
+  return { x: r.x0, y: r.y0, width: r.x1 - r.x0, height: r.y1 - r.y0 };
+}
+
+function OpeningPlan({ op, frame, t }: { op: Opening; frame: RunFrame; t: number }) {
+  const s0 = op.offset;
+  const s1 = op.offset + op.width;
+  const cut = runRect(frame, s0, s1, -t, 0);
+  const elems = [<rect key="cut" {...rectPath(cut)} fill="#FFFFFF" />];
+  if (op.type === "window") {
+    const a = pointOn(frame, s0, -t / 2);
+    const b = pointOn(frame, s1, -t / 2);
+    elems.push(
+      <rect key="frame" {...rectPath(cut)} fill="none" stroke="#3A3D40" strokeWidth={0.35} />,
+      <line key="glass" x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#3A3D40" strokeWidth={0.35} />,
+    );
+  } else if (op.type === "door") {
+    const hingeS = op.hinge === "left" ? s0 : s1;
+    const otherS = op.hinge === "left" ? s1 : s0;
+    const p = pointOn(frame, hingeS, 0);
+    const leaf = pointOn(frame, hingeS, op.width);
+    const jamb = pointOn(frame, otherS, 0);
+    const ax = leaf.x - p.x;
+    const ay = leaf.y - p.y;
+    const bx = jamb.x - p.x;
+    const by = jamb.y - p.y;
+    const sweep = ax * by - ay * bx > 0 ? 1 : 0;
+    elems.push(
+      <line key="leaf" x1={p.x} y1={p.y} x2={leaf.x} y2={leaf.y} stroke="#1A1D1F" strokeWidth={0.6} />,
+      <path key="arc" d={`M ${leaf.x} ${leaf.y} A ${op.width} ${op.width} 0 0 ${sweep} ${jamb.x} ${jamb.y}`} fill="none" stroke="#1A1D1F" strokeWidth={0.3} strokeDasharray="1.5 1" />,
+    );
+  }
+  return <g>{elems}</g>;
+}
+
+export function PlanView({ design, catalog, selectedId, problemIds, onTargetDown, onBackgroundDown, className, selectedRun }: ViewProps & { selectedRun?: string | null }) {
+  const { width: W, depth: D, wallThickness: t } = design.room;
+  const fs = Math.max(3, Math.min(6, Math.max(W, D) / 38));
+  const M = t + fs * 6;
+  const frames = new Map(allFrames(design).map((f) => [f.id, f]));
+
+  const down = (target: DrawTarget) => (e: ReactPointerEvent<SVGElement>) => {
+    if (!onTargetDown) return;
+    e.stopPropagation();
+    onTargetDown(e, target);
+  };
+
+  const lower = design.items.filter((i) => i.mountHeight === 0);
+  const upper = design.items.filter((i) => i.mountHeight > 0);
+
+  const drawItem = (it: PlacedItem, isUpper: boolean) => {
+    const frame = frames.get(it.run);
+    if (!frame) return null;
+    const r = itemRect(it, frame);
+    const paint = finishPaint(catalog, design, it);
+    const selected = selectedId === it.id;
+    const problem = problemIds?.has(it.id);
+    const f0 = pointOn(frame, it.offset, it.depth);
+    const f1 = pointOn(frame, it.offset + it.width, it.depth);
+    const labelPoint = pointOn(frame, it.offset + it.width / 2, isUpper ? Math.min(it.depth * 0.38, 5) : it.depth * 0.66);
+    const label = itemLabel(it);
+    const span = Math.min(r.x1 - r.x0, r.y1 - r.y0);
+    const lfs = Math.min(fs * 0.85, Math.max(span / Math.max(label.length * 0.62, 1), fs * 0.45));
+    return (
+      <g key={it.id} onPointerDown={down({ kind: "item", id: it.id })} style={{ cursor: onTargetDown ? "grab" : undefined }}>
+        <rect
+          {...rectPath(r)}
+          fill={paint.fill}
+          fillOpacity={isUpper ? 0.55 : 1}
+          stroke={problem ? PROBLEM : "#1A1D1F"}
+          strokeWidth={problem ? 0.7 : 0.35}
+          strokeDasharray={isUpper ? "1.6 1" : undefined}
+        />
+        {!isUpper && <line x1={f0.x} y1={f0.y} x2={f1.x} y2={f1.y} stroke="#1A1D1F" strokeWidth={0.8} />}
+        {selected && <rect x={r.x0 - 0.6} y={r.y0 - 0.6} width={r.x1 - r.x0 + 1.2} height={r.y1 - r.y0 + 1.2} fill="none" stroke={SELECT} strokeWidth={1.1} />}
+        <text
+          x={labelPoint.x}
+          y={labelPoint.y + lfs * 0.35}
+          fontSize={lfs}
+          textAnchor="middle"
+          fill={paint.ink}
+          fontWeight={600}
+          style={{ pointerEvents: "none" }}
+        >
+          {label}
+        </text>
+      </g>
+    );
+  };
+
+  const wallBands: Record<string, { x: number; y: number; width: number; height: number }> = {
+    A: { x: -t, y: -t, width: W + 2 * t, height: t },
+    B: { x: W, y: -t, width: t, height: D + 2 * t },
+    C: { x: -t, y: D, width: W + 2 * t, height: t },
+    D: { x: -t, y: -t, width: t, height: D + 2 * t },
+  };
+  const wallTag: Record<string, { x: number; y: number }> = {
+    A: { x: W / 2, y: -t - fs * 3.6 },
+    B: { x: W + t + fs * 3.6, y: D / 2 },
+    C: { x: W / 2, y: D + t + fs * 3.6 },
+    D: { x: -t - fs * 3.6, y: D / 2 },
+  };
+
+  return (
+    <svg
+      className={className}
+      viewBox={`${-M} ${-M} ${W + 2 * M} ${D + 2 * M}`}
+      xmlns="http://www.w3.org/2000/svg"
+      fontFamily="'Source Sans 3', Helvetica, Arial, sans-serif"
+      onPointerDown={() => onBackgroundDown?.()}
+      style={{ touchAction: "none", userSelect: "none" }}
+    >
+      <PaintDefs catalog={catalog} />
+      <defs>
+        <pattern id="floorgrid" patternUnits="userSpaceOnUse" width={12} height={12}>
+          <path d="M 12 0 L 0 0 0 12" fill="none" stroke="#E4E2DC" strokeWidth={0.2} />
+        </pattern>
+      </defs>
+      <rect x={0} y={0} width={W} height={D} fill="#FFFFFF" />
+      <rect x={0} y={0} width={W} height={D} fill="url(#floorgrid)" />
+
+      {WALLS.map((w) => (
+        <rect
+          key={w}
+          {...wallBands[w]}
+          fill={selectedRun === w ? "#5A4A1E" : "#33363A"}
+          onPointerDown={down({ kind: "wall", id: w })}
+          style={{ cursor: onTargetDown ? "pointer" : undefined }}
+        />
+      ))}
+
+      {design.openings.map((op) => {
+        const frame = wallFrame(design.room, op.wall);
+        const selected = selectedId === op.id;
+        const problem = problemIds?.has(op.id);
+        const hit = runRect(frame, op.offset, op.offset + op.width, -t, Math.min(op.width, 12));
+        return (
+          <g key={op.id} onPointerDown={down({ kind: "opening", id: op.id })} style={{ cursor: onTargetDown ? "grab" : undefined }}>
+            <rect {...rectPath(hit)} fill="transparent" />
+            <OpeningPlan op={op} frame={frame} t={t} />
+            {(selected || problem) && (
+              <rect {...rectPath(runRect(frame, op.offset, op.offset + op.width, -t - 0.6, 0.6))} fill="none" stroke={selected ? SELECT : PROBLEM} strokeWidth={1.1} />
+            )}
+          </g>
+        );
+      })}
+
+      {design.islands.map((isl) => {
+        const r = islandRect(design, isl);
+        const frame = islandFrame(design, isl);
+        const back = pointOn(frame, frame.length / 2, -fs * 0.9);
+        const selected = selectedId === isl.id;
+        return (
+          <g key={isl.id} onPointerDown={down({ kind: "island", id: isl.id })} style={{ cursor: onTargetDown ? "move" : undefined }}>
+            <rect x={r.x0 - 1.5} y={r.y0 - 1.5} width={r.x1 - r.x0 + 3} height={r.y1 - r.y0 + 3} fill="#F4F3EF" stroke={selected || selectedRun === isl.id ? SELECT : "#8A8D90"} strokeWidth={selected ? 1.1 : 0.4} strokeDasharray="2 1.2" />
+            {/* the name tag is the handle for moving the island */}
+            <text x={back.x} y={back.y + fs * 0.3} fontSize={fs * 0.75} textAnchor="middle" fill={selected ? "#1A1D1F" : "#6D7276"} fontWeight={600}>
+              {"\u2725 "}
+              {isl.name}
+            </text>
+          </g>
+        );
+      })}
+
+      {lower.map((it) => drawItem(it, false))}
+      {upper.map((it) => drawItem(it, true))}
+
+      {WALLS.map((w) => (
+        <g key={`tag-${w}`} onPointerDown={down({ kind: "wall", id: w })} style={{ cursor: onTargetDown ? "pointer" : undefined }}>
+          <circle cx={wallTag[w].x} cy={wallTag[w].y} r={fs * 1.05} fill={selectedRun === w ? "#D03238" : "#FFFFFF"} stroke="#1A1D1F" strokeWidth={0.4} />
+          <text x={wallTag[w].x} y={wallTag[w].y + fs * 0.36} fontSize={fs} textAnchor="middle" fontWeight={700} fill={selectedRun === w ? "#FFFFFF" : "#1A1D1F"}>
+            {w}
+          </text>
+        </g>
+      ))}
+
+      <DimH x0={0} x1={W} y={-t - fs * 1.4} fs={fs * 0.8} label={`${fmtIn(W)}  (${fmtFtIn(W)})`} />
+      <DimV y0={0} y1={D} x={-t - fs * 1.4} fs={fs * 0.8} label={`${fmtIn(D)}  (${fmtFtIn(D)})`} />
+    </svg>
+  );
+}

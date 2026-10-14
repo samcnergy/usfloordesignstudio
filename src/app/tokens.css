@@ -1,0 +1,59 @@
+/*
+ * US Floor Design Center design tokens.
+ * Copied from usflooring/src/app/tokens.css so Design Studio matches the brand.
+ */
+
+:root {
+  /* Ground */
+  --surface:         #FFFFFF;
+  --surface-alt:     #F4F5F6;
+  --surface-ink:     #0A0A0A;
+  --surface-scrim:   rgba(10, 10, 10, 0.82);
+
+  /* Text */
+  --text:            #1A1D1F;
+  --text-muted:      #6D7276;
+  --text-faint:      #8C8C8C;
+  --text-invert:     #FFFFFF;
+  --text-invert-muted: #B4B7BA;
+
+  /* Red */
+  --red:             #D03238;
+  --red-bright:      #DD0033;
+  --red-deep:        #790000;
+
+  /* Gold: hairlines and large numerals only */
+  --gold:            #B8912F;
+
+  /* Lines */
+  --line:            #DCDDDF;
+  --line-strong:     #1A1D1F;
+  --line-invert:     rgba(255, 255, 255, 0.16);
+
+  /* Radius. Zero. There is one value. */
+  --radius: 0px;
+
+  /* Spacing, 8px base */
+  --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px; --s-5: 24px;
+  --s-6: 32px; --s-7: 48px; --s-8: 64px; --s-9: 96px; --s-10: 128px;
+
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --dur: 150ms;
+
+  --font-display: 'Domine', Georgia, serif;
+  --font-body:    'Source Sans 3', system-ui, sans-serif;
+
+  --t-h1:       32px;
+  --t-h3:       21px;
+  --t-body:     15px;
+  --t-small:    14px;
+  --t-label:    12px;
+  --t-btn:      14px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+  }
+}
