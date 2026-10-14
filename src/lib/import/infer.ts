@@ -1,7 +1,7 @@
 // Turns a row from a vendor price list or website into a catalog product.
-// Anything the row states outright wins. Blanks are filled from the vendor's description
-// ("Base Cabinet- 12"(W) x 34 1/2"(H) x 24"(D) 1 Drawer -1 Door -1 Shelf"), and only then
-// from the SKU's letters and numbers (W3036 = wall, 30 wide, 36 high).
+// Anything the row states outright wins. Blanks are filled from the description
+// ("Base Cabinet- 12"(W) x 34 1/2"(H) x 24"(D) 1 Drawer -1 Door -1 Shelf") and from
+// the SKU's letters and numbers (W3036 = wall, 30 wide, 36 high).
 
 import type { Category, Style } from "../types";
 import { CATEGORIES, STYLES } from "../types";
@@ -235,19 +235,19 @@ export function inferProduct(row: RawRow, defaults: { line: string | null }): Pa
   let depth = numberField(row.depth) ?? dimFromText(rawDesc, "D");
   const length = dimFromText(rawDesc, "L");
   const fromSku = skuNumbers(sku);
-  // The vendor's written description is the source of truth. The SKU only fills a size the
-  // description leaves out; when the two disagree the row is flagged for a second look.
+  // The SKU is the true size (VSDB48 is 48 wide even where the vendor's page says 42).
+  // When the description disagrees, the SKU wins and the row is flagged in the preview.
   if (!numberField(row.width) && WIDTH_FAMILIES.has(family) && fromSku.width) {
-    if (width === null) width = fromSku.width;
-    else if (Math.abs(width - fromSku.width) > 0.01) {
-      warnings.push(`The description says ${width}" wide but the SKU suggests ${fromSku.width}". Used the description.`);
+    if (width !== null && Math.abs(width - fromSku.width) > 0.01) {
+      warnings.push(`Description says ${width}" wide but the SKU says ${fromSku.width}". Used ${fromSku.width}".`);
     }
+    width = fromSku.width;
   }
   if (!numberField(row.height) && HEIGHT_FAMILIES.has(family) && fromSku.height) {
-    if (height === null) height = fromSku.height;
-    else if (Math.abs(height - fromSku.height) > 0.01) {
-      warnings.push(`The description says ${height}" high but the SKU suggests ${fromSku.height}". Used the description.`);
+    if (height !== null && Math.abs(height - fromSku.height) > 0.01) {
+      warnings.push(`Description says ${height}" high but the SKU says ${fromSku.height}". Used ${fromSku.height}".`);
     }
+    height = fromSku.height;
   }
   if (height === null && length !== null && (cat === "accessory" || sty === "filler")) height = length;
 
