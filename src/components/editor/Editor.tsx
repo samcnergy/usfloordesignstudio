@@ -10,9 +10,10 @@ import { ElevationView, type DrawTarget } from "@/components/drawing/ElevationVi
 import { PlanView } from "@/components/drawing/PlanView";
 import { PrintSheet } from "@/components/print/PrintSheet";
 import { findProblems, firstFreeOffset, isWall, itemLabel, itemQuad, roomCenter, roomShape, runFrame, runLabel, wallLabel, wallLength, type Vec } from "@/lib/geometry";
-import type { Catalog, Category, DesignData, DesignRecord, ExtraItem, Island, Opening, OpeningType, PlacedItem, Product, ProductLine } from "@/lib/types";
+import type { Catalog, Category, DesignData, DesignRecord, ExtraItem, Island, Opening, OpeningType, PlacedItem, Product, ProductLine, Room } from "@/lib/types";
 import { useHistory } from "@/lib/useHistory";
 import { fmtIn, snap } from "@/lib/units";
+import { DrawRoom } from "./DrawRoom";
 import { LengthInput } from "./LengthInput";
 import { RoomPanel } from "./RoomPanel";
 
@@ -72,6 +73,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
   const [activeRun, setActiveRun] = useState<string>("A");
   const [notice, setNotice] = useState<string | null>(null);
   const [printing, setPrinting] = useState(false);
+  const [drawing, setDrawing] = useState(false);
 
   const activeCatalog = useMemo<Catalog>(
     () => ({
@@ -477,9 +479,27 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
     };
   }, [begin, preview, commit]);
 
+  // ---------- drawing the room ----------
+  // pieces stay on the wall with the same letter, so a redrawn room needs at least that many walls
+  const minWalls = Math.max(
+    3,
+    ...design.room.walls.map((w, i) => (design.items.some((it) => it.run === w.id) || design.openings.some((o) => o.wall === w.id) ? i + 1 : 0)),
+  );
+  const startDrawing = () => {
+    setSelectedId(null);
+    setView("plan");
+    setDrawing(true);
+  };
+  const finishDrawing = (room: Room) => {
+    apply((d) => ({ ...d, room }));
+    setDrawing(false);
+    setActiveRun(room.walls[0].id);
+  };
+
   // ---------- keyboard ----------
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
+      if (drawing) return; // the drawing tool has its own keys
       const el = e.target as HTMLElement;
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) return;
       const mod = e.metaKey || e.ctrlKey;
@@ -517,7 +537,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [undo, redo, removeSelected, selectedId, selectedIsland, selectedItem, selectedOpening, updateIsland, updateItem, updateOpening]);
+  }, [drawing, undo, redo, removeSelected, selectedId, selectedIsland, selectedItem, selectedOpening, updateIsland, updateItem, updateOpening]);
 
   // ---------- printing ----------
   useEffect(() => {
@@ -655,7 +675,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
 
           {tab === "room" && (
             <div className="panel-scroll">
-              <RoomPanel design={design} apply={apply} flash={flash} selectedRun={activeRunValid} onSelectWall={(id) => setActiveRun(id)} />
+              <RoomPanel design={design} apply={apply} flash={flash} selectedRun={activeRunValid} onSelectWall={(id) => setActiveRun(id)} onDraw={startDrawing} drawing={drawing} />
               <h3 className="cat-title">Islands</h3>
               <ul className="list">
                 {design.islands.map((i) => (
@@ -700,24 +720,35 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
         {/* ---------- canvas ---------- */}
         <main className="canvas">
           <div className="view-tabs">
-            <button className={`chip ${viewValid === "plan" ? "chip-on" : ""}`} onClick={() => setView("plan")}>
-              Top view
-            </button>
-            {runs.map((r) => (
-              <button
-                key={r.id}
-                className={`chip ${viewValid === r.id ? "chip-on" : ""}`}
-                onClick={() => {
-                  setView(r.id);
-                  setActiveRun(r.id);
-                }}
-              >
-                {r.label}
-              </button>
-            ))}
+            {drawing ? (
+              <span className="view-tabs-title">Drawing the walls</span>
+            ) : (
+              <>
+                <button className={`chip ${viewValid === "plan" ? "chip-on" : ""}`} onClick={() => setView("plan")}>
+                  Top view
+                </button>
+                {runs.map((r) => (
+                  <button
+                    key={r.id}
+                    className={`chip ${viewValid === r.id ? "chip-on" : ""}`}
+                    onClick={() => {
+                      setView(r.id);
+                      setActiveRun(r.id);
+                    }}
+                  >
+                    {r.label}
+                  </button>
+                ))}
+                <button className="btn btn-secondary btn-small view-tabs-draw" onClick={startDrawing} title="Draw the room's walls with the mouse">
+                  Draw walls
+                </button>
+              </>
+            )}
           </div>
           <div className="canvas-stage">
-            {viewValid === "plan" ? (
+            {drawing ? (
+              <DrawRoom room={design.room} minWalls={minWalls} onFinish={finishDrawing} onCancel={() => setDrawing(false)} flash={flash} />
+            ) : viewValid === "plan" ? (
               <PlanView
                 design={design}
                 catalog={catalog}

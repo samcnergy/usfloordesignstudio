@@ -83,12 +83,16 @@ export function RoomPanel({
   flash,
   selectedRun,
   onSelectWall,
+  onDraw,
+  drawing,
 }: {
   design: DesignData;
   apply: (fn: (d: DesignData) => DesignData) => void;
   flash: (m: string) => void;
   selectedRun: string;
   onSelectWall: (id: string) => void;
+  onDraw: () => void;
+  drawing: boolean;
 }) {
   const room = design.room;
   const shape = roomShape(room);
@@ -160,7 +164,8 @@ export function RoomPanel({
       return;
     }
     setRoom((r) => ({
-      ...r,
+      ceiling: r.ceiling,
+      wallThickness: r.wallThickness,
       walls: specs.map(([length, corner], i) => ({ id: r.walls[i]?.id ?? newId(), length, corner })),
     }));
   };
@@ -173,6 +178,12 @@ export function RoomPanel({
       </div>
 
       <h3 className="cat-title">Walls</h3>
+      <button className="btn btn-primary" onClick={onDraw} disabled={drawing}>
+        {drawing ? "Drawing in the top view" : "Draw walls with the mouse"}
+      </button>
+      <p className="muted">
+        Click each corner in the top view, or type a wall&apos;s length and press Enter. Or type the walls in below.
+      </p>
       <p className="muted">
         Go clockwise around the room starting with Wall A, the top wall in the top view. For each wall type its length and the corner at its end, measured inside
         the room: 90° for a normal corner, 270° where an L turns in, 135° for a cut corner. The last wall closes the room by itself.

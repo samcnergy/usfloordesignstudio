@@ -130,6 +130,9 @@ export interface Room {
   walls: Wall[];
   ceiling: number;
   wallThickness: number;
+  // Direction of Wall A in the top view, degrees clockwise from pointing right. Only set for
+  // rooms drawn with the mouse that have no straight top wall to start from.
+  rotation?: number;
 }
 
 export interface Island {
@@ -258,6 +261,7 @@ export function normalizeRoom(raw: unknown): Room {
       walls: r.walls.map((w) => ({ id: String(w.id), length: Number(w.length) || 0, corner: Number(w.corner) || 90, ...(w.open ? { open: true } : {}) })),
       ceiling,
       wallThickness,
+      ...(typeof r.rotation === "number" && r.rotation !== 0 ? { rotation: r.rotation } : {}),
     };
   }
   return rectangleRoom(typeof r.width === "number" ? r.width : 144, typeof r.depth === "number" ? r.depth : 120, ceiling, wallThickness);

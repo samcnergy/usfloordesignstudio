@@ -295,3 +295,15 @@ textarea.input { resize: vertical; }
 .corner-input { display: flex; gap: 6px; }
 .corner-input select.input { flex: 1; min-width: 0; }
 .corner-num { width: 72px; flex: 0 0 72px; }
+
+/* Draw walls with the mouse */
+.view-tabs-draw { margin-left: auto; }
+.view-tabs-title { font-weight: 700; align-self: center; }
+.draw { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: var(--s-2); }
+.draw-bar { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--s-2) var(--s-4); }
+.draw-hint { margin: 0; font-weight: 600; flex: 1 1 260px; min-height: 2.8em; }
+.draw-fields { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--s-2); }
+.draw-field { display: flex; flex-direction: column; gap: 4px; }
+.draw-field .input { width: 96px; }
+.draw-svg { flex: 1; min-height: 0; width: 100%; display: block; background: var(--surface); border: 1px solid var(--line); }
+.draw-help { margin: 0; }

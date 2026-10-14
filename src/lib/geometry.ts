@@ -1,6 +1,7 @@
 // Room geometry. Top view coordinates: x to the right, y down. The room is a
 // list of walls walked clockwise, starting with Wall A at the origin heading
-// right. Any number of walls and any corner angle; the last wall closes the shape.
+// right (or turned by room.rotation). Any number of walls and any corner angle;
+// the last wall closes the shape.
 //
 // Every wall and island is a "run". A run has an origin (its left end as seen
 // by someone standing in the room facing it), a unit vector u pointing to the
@@ -102,7 +103,7 @@ export function roomShape(room: Room): RoomShape {
   const dirs: Vec[] = [];
   const lengths: number[] = [];
   let p: Vec = { x: 0, y: 0 };
-  let heading = 0;
+  let heading = room.rotation ?? 0;
   for (let i = 0; i < N - 1; i++) {
     const u = { x: Math.cos(rad(heading)), y: Math.sin(rad(heading)) };
     starts.push(p);
@@ -119,7 +120,7 @@ export function roomShape(room: Room): RoomShape {
 
   const corners = src.map((w, i) => {
     if (i < N - 2) return w.corner;
-    const next = i === N - 1 ? { x: 1, y: 0 } : dirs[i + 1];
+    const next = dirs[(i + 1) % N];
     return roundAngle(180 - turnBetween(dirs[i], next));
   });
 
