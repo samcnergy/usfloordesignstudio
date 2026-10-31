@@ -135,12 +135,17 @@ export interface Room {
   rotation?: number;
 }
 
+/**
+ * A free standing run of cabinets: an island, a peninsula, or a single piece
+ * lifted off a wall. It stands anywhere on the floor at any angle.
+ */
 export interface Island {
   id: string;
   name: string;
   x: number; // left end of the island's back line, in room coordinates
   y: number;
-  rotation: 0 | 90 | 180 | 270;
+  rotation: number; // degrees clockwise from pointing right in the top view
+  auto?: boolean; // made by dragging a piece off a wall; goes away when nothing is left on it
 }
 
 export type OpeningType = "door" | "window" | "opening";

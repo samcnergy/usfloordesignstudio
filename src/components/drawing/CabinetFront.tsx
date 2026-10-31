@@ -15,7 +15,7 @@ const STEEL_LINE = "#7E8488";
 const STEEL_HANDLE = "#55595C";
 
 type Hinge = "left" | "right";
-type Handle = "drawer" | "none" | { door: Hinge; at: "top" | "bottom" | "middle" } | "fridge-left" | "fridge-right";
+type Handle = "drawer" | "pullout" | "none" | { door: Hinge; at: "top" | "bottom" | "middle" } | "fridge-left" | "fridge-right";
 
 interface Face {
   x0: number;
@@ -69,7 +69,24 @@ function drawerRow(x0: number, x1: number, z0: number, z1: number, n: number): F
   return Array.from({ length: count }, (_, i) => ({ x0: x0 + i * w, z0, x1: x0 + (i + 1) * w, z1, handle: "drawer" as const }));
 }
 
+/**
+ * Spice racks, trash and recycling cabinets have a front that pulls straight out,
+ * so it carries a handle across the face and never swings on a hinge.
+ */
+function isPullOut(item: PlacedItem): boolean {
+  return /spice|trash|waste|garbage|recycl|pull[-\s]?out/i.test(`${item.code} ${item.name}`);
+}
+
 export function frontFaces(item: PlacedItem): { faces: Face[]; extras: Extras; toe: boolean } {
+  const built = buildFaces(item);
+  if (!isPullOut(item)) return built;
+  return {
+    ...built,
+    faces: built.faces.map((f) => (typeof f.handle === "object" ? { ...f, handle: "pullout" as const, swing: undefined } : f)),
+  };
+}
+
+function buildFaces(item: PlacedItem): { faces: Face[]; extras: Extras; toe: boolean } {
   const w = item.width;
   const h = item.height;
   const top = h;
@@ -327,9 +344,10 @@ function HandleMark({ face, Y, ox, ink }: { face: Face; Y: (z: number) => number
   const fh = face.z1 - face.z0;
   const color = ink === "#ECEAE4" ? "#D8D5CC" : "#4A4D50";
   if (face.handle === "none") return null;
-  if (face.handle === "drawer") {
+  if (face.handle === "drawer" || face.handle === "pullout") {
     const len = Math.min(Math.max(fw * 0.35, 3), 12);
-    const zc = face.z0 + fh / 2;
+    // a pull-out front is tall, so its bar sits near the top where the hand reaches it
+    const zc = face.handle === "pullout" && fh > 12 ? face.z1 - 3 : face.z0 + fh / 2;
     return <rect x={fx0 + fw / 2 - len / 2} y={Y(zc) - 0.35} width={len} height={0.7} rx={0.35} fill={color} />;
   }
   if (face.handle === "fridge-left" || face.handle === "fridge-right") {

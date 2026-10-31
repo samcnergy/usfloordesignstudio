@@ -9,7 +9,23 @@ import { Brand } from "@/components/Brand";
 import { ElevationView, type DrawTarget } from "@/components/drawing/ElevationView";
 import { PlanView } from "@/components/drawing/PlanView";
 import { PrintSheet } from "@/components/print/PrintSheet";
-import { findProblems, firstFreeOffset, isWall, itemLabel, itemQuad, roomCenter, roomShape, runFrame, runLabel, wallLabel, wallLength, type Vec } from "@/lib/geometry";
+import {
+  angleGap,
+  findProblems,
+  firstFreeOffset,
+  isWall,
+  itemLabel,
+  itemQuad,
+  roomCenter,
+  roomShape,
+  runFrame,
+  runLabel,
+  wallLabel,
+  wallLength,
+  wrapAngle,
+  type Vec,
+} from "@/lib/geometry";
+import { dragInPlan, dropEmptyRuns, floorSpotFor, itemRun, moveRun, putOnFloor, slideAlongRun, standsAlone, turnPivot, turnRun } from "@/lib/place";
 import type { Catalog, Category, DesignData, DesignRecord, ExtraItem, Island, Opening, OpeningType, PlacedItem, Product, ProductLine, Room } from "@/lib/types";
 import { useHistory } from "@/lib/useHistory";
 import { fmtIn, snap } from "@/lib/units";
@@ -73,6 +89,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
   const [activeRun, setActiveRun] = useState<string>("A");
   const [notice, setNotice] = useState<string | null>(null);
   const [printing, setPrinting] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
   const [drawing, setDrawing] = useState(false);
 
   const activeCatalog = useMemo<Catalog>(
@@ -147,7 +164,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
 
   // ---------- edits ----------
   const updateItem = useCallback(
-    (id: string, patch: Partial<PlacedItem>) => apply((d) => ({ ...d, items: d.items.map((i) => (i.id === id ? { ...i, ...patch } : i)) })),
+    (id: string, patch: Partial<PlacedItem>) => apply((d) => dropEmptyRuns({ ...d, items: d.items.map((i) => (i.id === id ? { ...i, ...patch } : i)) })),
     [apply],
   );
   const updateOpening = useCallback(
@@ -161,14 +178,33 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
 
   const removeSelected = useCallback(() => {
     if (!selectedId) return;
-    apply((d) => ({
-      ...d,
-      items: d.items.filter((i) => i.id !== selectedId && i.run !== selectedId),
-      openings: d.openings.filter((o) => o.id !== selectedId),
-      islands: d.islands.filter((i) => i.id !== selectedId),
-    }));
+    apply((d) =>
+      dropEmptyRuns({
+        ...d,
+        items: d.items.filter((i) => i.id !== selectedId && i.run !== selectedId),
+        openings: d.openings.filter((o) => o.id !== selectedId),
+        islands: d.islands.filter((i) => i.id !== selectedId),
+      }),
+    );
     setSelectedId(null);
   }, [apply, selectedId]);
+
+  /** Lifts a piece off its wall onto a floor run of its own, out in front of where it stood. */
+  const liftOntoFloor = useCallback(
+    (item: PlacedItem) => {
+      if (item.mountHeight > 0) {
+        flash("Wall cabinets and hoods hang on a wall, so they stay on one.");
+        return;
+      }
+      const runId = uid();
+      apply((d) => {
+        const it = d.items.find((i) => i.id === item.id);
+        return it ? putOnFloor(d, it.id, floorSpotFor(d, it), runId) : d;
+      });
+      setActiveRun(runId);
+    },
+    [apply, flash],
+  );
 
   const addProduct = (p: Product) => {
     if (!p.placeable || p.width === null || p.height === null || p.depth === null) {
@@ -197,6 +233,16 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
         .find((r) => !hoods.some((h) => h.offset < r.offset + r.width && r.offset < h.offset + h.width));
       if (range) offset = range.offset + (range.width - width) / 2;
     }
+    // A new wall piece lines up with the wall cabinets already on this run, so a bridge
+    // between pieces that run to the ceiling sits flush with them instead of dropping to
+    // the standard 84" top. Nothing is ever placed through the ceiling.
+    let mountHeight = mount;
+    if (mountHeight > 0) {
+      const tops = design.items.filter((i) => i.run === run && i.category === "wall" && i.mountHeight > 0).map((i) => i.mountHeight + i.height);
+      const top = tops.length ? Math.max(...tops) : null;
+      if (top !== null && top - height >= 1) mountHeight = top - height;
+      if (mountHeight + height > design.room.ceiling) mountHeight = Math.max(0, design.room.ceiling - height);
+    }
     const line = activeCatalog.lines.find((l) => l.id === p.line_id);
     const item: PlacedItem = {
       id: uid(),
@@ -211,7 +257,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
       width,
       height,
       depth: p.depth,
-      mountHeight: mount,
+      mountHeight,
       doors: p.doors,
       drawers: p.drawers,
       splitHeight: p.split_height,
@@ -346,6 +392,11 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
     start: { x: number; y: number };
     startOffset: number;
     startXY: { x: number; y: number };
+    startAngle: number; // turning a run: the run's angle when the drag started
+    pivot: Vec | null; // turning a run: the point it swings around
+    grabAngle: number; // turning a run: where the pointer was, around the pivot
+    newRunId: string; // used if the piece comes off its wall onto the floor
+    landedOn: string | null; // the run the piece ended up on, so new pieces follow it there
     moved: boolean;
     cycleTo: string | null;
   } | null>(null);
@@ -358,6 +409,30 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
   };
 
   const handleTargetDown = (viewKind: "plan" | "elev", e: ReactPointerEvent<SVGElement>, target: DrawTarget) => {
+    if (target.kind === "turn") {
+      // the grip turns the run; whatever is selected stays selected
+      const svg = (e.currentTarget as SVGElement).ownerSVGElement;
+      const pivot = turnPivot(design, target.id);
+      const run = design.islands.find((i) => i.id === target.id);
+      if (!svg || !pivot || !run || e.button !== 0) return;
+      const start = svgPoint(svg, e.clientX, e.clientY);
+      drag.current = {
+        target,
+        svg,
+        viewKind,
+        start,
+        startOffset: 0,
+        startXY: { x: run.x, y: run.y },
+        startAngle: run.rotation,
+        pivot,
+        grabAngle: (Math.atan2(start.y - pivot.y, start.x - pivot.x) * 180) / Math.PI,
+        newRunId: uid(),
+        landedOn: null,
+        moved: false,
+        cycleTo: null,
+      };
+      return;
+    }
     if (target.kind === "wall") {
       setActiveRun(target.id);
       setSelectedId(null);
@@ -406,6 +481,11 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
       start,
       startOffset: it?.offset ?? op?.offset ?? 0,
       startXY: isl ? { x: isl.x, y: isl.y } : { x: 0, y: 0 },
+      startAngle: 0,
+      pivot: null,
+      grabAngle: 0,
+      newRunId: uid(),
+      landedOn: null,
       moved: false,
       cycleTo,
     };
@@ -425,31 +505,25 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
       }
       const { target } = dr;
       if (target.kind === "island") {
-        preview((d) => ({
-          ...d,
-          islands: d.islands.map((i) => (i.id === target.id ? { ...i, x: snap(dr.startXY.x + dx, 1), y: snap(dr.startXY.y + dy, 1) } : i)),
-        }));
+        preview((d) => moveRun(d, target.id, dr.startXY.x + dx, dr.startXY.y + dy));
+        return;
+      }
+      if (target.kind === "turn") {
+        const pivot = dr.pivot;
+        if (!pivot) return;
+        const now = (Math.atan2(p.y - pivot.y, p.x - pivot.x) * 180) / Math.PI;
+        const raw = dr.startAngle + now - dr.grabAngle;
+        // free turning with Shift or Alt held, otherwise every 15 degrees
+        const angle = e.shiftKey || e.altKey ? wrapAngle(raw) : wrapAngle(snap(raw, 15));
+        preview((d) => turnRun(d, target.id, angle));
         return;
       }
       preview((d) => {
         if (target.kind === "item") {
-          const it = d.items.find((i) => i.id === target.id);
-          if (!it) return d;
-          const frame = runFrame(d, it.run);
-          if (!frame) return d;
-          const delta = dr.viewKind === "plan" ? dx * frame.u.x + dy * frame.u.y : dx;
-          let next = snap(dr.startOffset + delta, 0.5);
-          // magnetic snap to the wall ends and to neighboring pieces at the same height
-          const cands = [0];
-          if (frame.kind === "wall") cands.push(frame.length - it.width);
-          for (const o of d.items) {
-            if (o.run !== it.run || o.id === it.id) continue;
-            const overlapV = o.mountHeight < it.mountHeight + it.height && it.mountHeight < o.mountHeight + o.height;
-            if (!overlapV) continue;
-            cands.push(o.offset + o.width, o.offset - it.width);
-          }
-          for (const c of cands) if (Math.abs(next - c) < 2) next = c;
-          return { ...d, items: d.items.map((i) => (i.id === it.id ? { ...i, offset: next } : i)) };
+          const next = dr.viewKind === "plan" ? dragInPlan(d, target.id, dx, dy, dr.newRunId) : slideAlongRun(d, target.id, dx);
+          // note where it landed: a piece dragged onto the floor takes the "add here" target with it
+          dr.landedOn = next.items.find((i) => i.id === target.id)?.run ?? null;
+          return next;
         }
         if (target.kind === "opening") {
           const op = d.openings.find((o) => o.id === target.id);
@@ -465,8 +539,10 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
     };
     const up = () => {
       const dr = drag.current;
-      if (dr?.moved) commit();
-      else if (dr?.cycleTo) setSelectedId(dr.cycleTo);
+      if (dr?.moved) {
+        commit();
+        if (dr.landedOn) setActiveRun(dr.landedOn);
+      } else if (dr?.cycleTo) setSelectedId(dr.cycleTo);
       drag.current = null;
     };
     window.addEventListener("pointermove", move);
@@ -520,7 +596,21 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
         return;
       }
       if (e.key === "Escape") {
-        setSelectedId(null);
+        if (previewing) setPreviewing(false);
+        else setSelectedId(null);
+        return;
+      }
+      // R turns a free standing piece or island; the arrows move or slide the selection
+      if (e.key.toLowerCase() === "r" && !mod) {
+        const run = selectedIsland ?? (selectedItem ? itemRun(design, selectedItem) : null);
+        if (!run) return;
+        e.preventDefault();
+        const step = e.shiftKey ? -15 : 15;
+        // read the angle inside the edit, so holding R keeps turning
+        apply((d) => {
+          const now = d.islands.find((i) => i.id === run.id);
+          return now ? turnRun(d, now.id, now.rotation + step) : d;
+        });
         return;
       }
       if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown") {
@@ -528,16 +618,42 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
         e.preventDefault();
         const step = e.shiftKey ? 3 : 0.5;
         const sign = e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 1;
-        if (selectedIsland) {
-          const horiz = e.key === "ArrowLeft" || e.key === "ArrowRight";
-          updateIsland(selectedIsland.id, horiz ? { x: selectedIsland.x + sign * (e.shiftKey ? 6 : 1) } : { y: selectedIsland.y + sign * (e.shiftKey ? 6 : 1) });
+        const horiz = e.key === "ArrowLeft" || e.key === "ArrowRight";
+        // a piece standing on its own floor run moves across the floor, not along a run
+        const own = selectedItem && standsAlone(design, selectedItem) ? itemRun(design, selectedItem) : null;
+        const run = selectedIsland ?? own;
+        if (run) {
+          updateIsland(run.id, horiz ? { x: run.x + sign * step } : { y: run.y + sign * step });
         } else if (selectedItem) updateItem(selectedItem.id, { offset: selectedItem.offset + sign * step });
         else if (selectedOpening) updateOpening(selectedOpening.id, { offset: selectedOpening.offset + sign * step });
       }
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [drawing, undo, redo, removeSelected, selectedId, selectedIsland, selectedItem, selectedOpening, updateIsland, updateItem, updateOpening]);
+  }, [apply, design, drawing, previewing, undo, redo, removeSelected, selectedId, selectedIsland, selectedItem, selectedOpening, updateIsland, updateItem, updateOpening]);
+
+  // ---------- preview ----------
+  // The package is drawn at its real paper size, so it is scaled down to fit the window.
+  const previewBody = useRef<HTMLDivElement | null>(null);
+  const previewSheet = useRef<HTMLDivElement | null>(null);
+  const [previewFit, setPreviewFit] = useState({ k: 1, w: 0, h: 0 });
+  useEffect(() => {
+    if (!previewing) return;
+    const body = previewBody.current;
+    const sheet = previewSheet.current;
+    if (!body || !sheet) return;
+    const fit = () => {
+      const w = sheet.offsetWidth;
+      const h = sheet.offsetHeight;
+      if (!w || !h) return;
+      const k = Math.min(1, Math.max(0.25, (body.clientWidth - 32) / w));
+      setPreviewFit({ k, w, h });
+    };
+    const ro = new ResizeObserver(fit);
+    ro.observe(body);
+    ro.observe(sheet);
+    return () => ro.disconnect();
+  }, [previewing]);
 
   // ---------- printing ----------
   useEffect(() => {
@@ -584,6 +700,9 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
           </button>
           <button className="btn btn-ghost" onClick={redo} disabled={!history.canRedo} title="Redo (Ctrl/Cmd+Shift+Z)">
             Redo
+          </button>
+          <button className="btn btn-secondary" onClick={() => setPreviewing(true)} title="See the whole package before printing">
+            Preview
           </button>
           <button className="btn btn-primary" onClick={() => setPrinting(true)}>
             Print / PDF
@@ -676,7 +795,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
           {tab === "room" && (
             <div className="panel-scroll">
               <RoomPanel design={design} apply={apply} flash={flash} selectedRun={activeRunValid} onSelectWall={(id) => setActiveRun(id)} onDraw={startDrawing} drawing={drawing} />
-              <h3 className="cat-title">Islands</h3>
+              <h3 className="cat-title">Islands and floor runs</h3>
               <ul className="list">
                 {design.islands.map((i) => (
                   <li key={i.id}>
@@ -787,7 +906,8 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
               </ul>
             ) : (
               <span className="muted">
-                Drag pieces to move them. Arrow keys nudge 1/2&quot; (Shift for 3&quot;). Delete removes the selected piece.
+                Drag pieces to move them. Drag one a foot off its wall to stand it anywhere on the floor, then turn it with the grip behind it or press R. Arrow keys nudge 1/2&quot;
+                (Shift for 3&quot;). Delete removes the selected piece.
               </span>
             )}
           </div>
@@ -805,6 +925,15 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
               update={(patch) => updateItem(selectedItem.id, patch)}
               swap={(p) => swapProduct(selectedItem, p)}
               remove={removeSelected}
+              lift={() => liftOntoFloor(selectedItem)}
+              turn={(angle) => {
+                const run = itemRun(design, selectedItem);
+                if (run) apply((d) => turnRun(d, run.id, angle));
+              }}
+              place={(patch) => {
+                const run = itemRun(design, selectedItem);
+                if (run) updateIsland(run.id, patch);
+              }}
               duplicate={() => {
                 const copy: PlacedItem = { ...selectedItem, id: uid() };
                 copy.offset = firstFreeOffset(design, copy.run, copy.width, [copy.mountHeight, copy.mountHeight + copy.height]);
@@ -815,12 +944,50 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
           ) : selectedOpening ? (
             <OpeningInspector key={selectedOpening.id} op={selectedOpening} design={design} update={(patch) => updateOpening(selectedOpening.id, patch)} remove={removeSelected} />
           ) : selectedIsland ? (
-            <IslandInspector key={selectedIsland.id} island={selectedIsland} update={(patch) => updateIsland(selectedIsland.id, patch)} remove={removeSelected} />
+            <IslandInspector
+              key={selectedIsland.id}
+              island={selectedIsland}
+              update={(patch) => updateIsland(selectedIsland.id, patch)}
+              turn={(angle) => apply((d) => turnRun(d, selectedIsland.id, angle))}
+              remove={removeSelected}
+            />
           ) : (
             <DesignInspector design={design} catalog={activeCatalog} cabinetLines={cabinetLines} lineId={designLineId} apply={apply} onLine={switchLine} />
           )}
         </aside>
       </div>
+
+      {previewing && (
+        <div className="preview-back no-print" role="dialog" aria-modal="true" aria-label="Design package preview">
+          <div className="preview-bar">
+            <div>
+              <div className="preview-title">Design package</div>
+              <div className="muted">US Letter landscape. This is exactly what prints.</div>
+            </div>
+            <div className="preview-actions">
+              <button className="btn btn-secondary" onClick={() => setPreviewing(false)}>
+                Close
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  setPreviewing(false);
+                  setPrinting(true);
+                }}
+              >
+                Print / PDF
+              </button>
+            </div>
+          </div>
+          <div className="preview-scroll" ref={previewBody}>
+            <div className="preview-stage" style={previewFit.w ? { width: previewFit.w * previewFit.k, height: previewFit.h * previewFit.k } : undefined}>
+              <div className="preview-sheet" ref={previewSheet} style={{ transform: `scale(${previewFit.k})` }}>
+                <PrintSheet record={record} catalog={catalog} />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {printing && (
         <div className="print-only">
@@ -938,6 +1105,9 @@ function ItemInspector({
   swap,
   remove,
   duplicate,
+  lift,
+  turn,
+  place,
 }: {
   item: PlacedItem;
   design: DesignData;
@@ -947,6 +1117,9 @@ function ItemInspector({
   swap: (p: Product) => void;
   remove: () => void;
   duplicate: () => void;
+  lift: () => void;
+  turn: (angle: number) => void;
+  place: (p: { x?: number; y?: number }) => void;
 }) {
   const product = catalog.products.find((p) => p.id === item.productId);
   const line = catalog.lines.find((l) => l.id === product?.line_id);
@@ -958,6 +1131,12 @@ function ItemInspector({
     : [];
   const frame = runFrame(design, item.run);
   const wallHung = item.mountHeight > 0;
+  const onFloorRun = itemRun(design, item);
+  const alone = standsAlone(design, item);
+  const atCeiling = Math.abs(item.mountHeight + item.height - design.room.ceiling) < 0.01;
+  // the top the other wall cabinets on this run line up at, if they agree on one
+  const otherTops = design.items.filter((i) => i.id !== item.id && i.run === item.run && i.category === "wall" && i.mountHeight > 0).map((i) => i.mountHeight + i.height);
+  const neighborTop = otherTops.length ? Math.max(...otherTops) : null;
   const hasDoors = !["drawer_base", "range", "dishwasher", "hood", "filler", "panel", "open_shelf", "wine_rack", "plate_rack"].includes(item.style);
   const isSided = ["blind_corner_base", "wall_blind_corner", "lazy_susan", "vanity_combo"].includes(item.style);
   const rightGap = frame && frame.kind === "wall" ? frame.length - item.offset - item.width : null;
@@ -996,6 +1175,23 @@ function ItemInspector({
         </select>
       </label>
 
+      {onFloorRun ? (
+        <div className="field">
+          <span className="field-label">{alone ? "Angle on the floor" : `Angle (turns all of ${onFloorRun.name})`}</span>
+          <AngleInput id="it-ang" value={onFloorRun.rotation} onChange={turn} />
+          <p className="muted">Drag it anywhere in the top view. The grip behind it turns it, or press R.</p>
+        </div>
+      ) : (
+        !wallHung && (
+          <div className="field">
+            <button className="btn btn-secondary" onClick={lift}>
+              Put on the open floor
+            </button>
+            <p className="muted">Stands clear of the wall, free to move anywhere and turn to any angle. Dragging it a foot off the wall does the same.</p>
+          </div>
+        )
+      )}
+
       {siblings.length > 1 && (
         <div className="field">
           <span className="field-label">Other sizes</span>
@@ -1015,7 +1211,14 @@ function ItemInspector({
       )}
 
       <div className="grid2">
-        <LengthInput id="it-off" label="From left end" value={item.offset} onChange={(v) => update({ offset: v })} hint={rightGap !== null ? `${fmtIn(rightGap)} to right end` : undefined} />
+        {onFloorRun && alone ? (
+          <>
+            <LengthInput id="it-x" label="Across from corner A" value={onFloorRun.x} onChange={(v) => place({ x: v })} hint="Back left corner of the piece" />
+            <LengthInput id="it-y" label="Down from Wall A" value={onFloorRun.y} onChange={(v) => place({ y: v })} />
+          </>
+        ) : (
+          <LengthInput id="it-off" label="From left end" value={item.offset} onChange={(v) => update({ offset: v })} hint={rightGap !== null ? `${fmtIn(rightGap)} to right end` : undefined} />
+        )}
         <LengthInput id="it-w" label="Exact width" value={item.width} min={0.5} max={120} onChange={(v) => update({ width: v })} />
         <LengthInput id="it-d" label="Depth" value={item.depth} min={0.5} max={48} onChange={(v) => update({ depth: v })} />
         {wallHung ? (
@@ -1024,6 +1227,25 @@ function ItemInspector({
           <LengthInput id="it-h" label="Height" value={item.height} min={1} max={design.room.ceiling} onChange={(v) => update({ height: v })} />
         )}
       </div>
+
+      {wallHung && (
+        <div className="field">
+          <span className="field-label">Top of the piece</span>
+          <div className="chips">
+            <button className={`chip ${atCeiling ? "chip-on" : ""}`} onClick={() => update({ mountHeight: Math.max(0, design.room.ceiling - item.height) })}>
+              Flush with ceiling
+            </button>
+            {neighborTop !== null && (
+              <button className={`chip ${Math.abs(item.mountHeight + item.height - neighborTop) < 0.01 ? "chip-on" : ""}`} onClick={() => update({ mountHeight: Math.max(0, neighborTop - item.height) })}>
+                Line up with the others
+              </button>
+            )}
+          </div>
+          <p className="muted">
+            Top is {fmtIn(item.mountHeight + item.height)} off the floor. Ceiling is {fmtIn(design.room.ceiling)}.
+          </p>
+        </div>
+      )}
 
       {(hasDoors || isSided) && (
         <div className="field">
@@ -1117,12 +1339,59 @@ function OpeningInspector({ op, design, update, remove }: { op: Opening; design:
   );
 }
 
-function IslandInspector({ island, update, remove }: { island: Island; update: (p: Partial<Island>) => void; remove: () => void }) {
+/** Which way the fronts of a run at this angle look, in plain words. */
+function facing(rotation: number): string {
+  const a = wrapAngle(rotation + 90); // fronts face a quarter turn clockwise from the run
+  const names = ["right", "down", "left", "up"];
+  const near = Math.round(a / 90) % 4;
+  const exact = Math.abs(angleGap(a, near * 90)) < 1;
+  return exact ? names[near] : `between ${names[Math.floor(a / 90) % 4]} and ${names[(Math.floor(a / 90) + 1) % 4]}`;
+}
+
+/** Any angle in degrees, with the four square angles and 15 degree steps one click away. */
+function AngleInput({ id, value, onChange }: { id: string; value: number; onChange: (angle: number) => void }) {
+  const [text, setText] = useState("");
+  const shown = text === "" ? String(Math.round(wrapAngle(value) * 10) / 10) : text;
+  return (
+    <div className="angle-row">
+      <input
+        id={id}
+        className="input angle-input"
+        inputMode="decimal"
+        value={shown}
+        onChange={(e) => {
+          setText(e.target.value);
+          const v = parseFloat(e.target.value);
+          if (Number.isFinite(v)) onChange(v);
+        }}
+        onBlur={() => setText("")}
+        aria-label="Angle in degrees"
+      />
+      <span className="angle-deg">{"°"}</span>
+      <div className="chips">
+        <button className="chip" onClick={() => onChange(value - 15)} title="Turn 15 degrees counter-clockwise">
+          {"↺ 15"}
+        </button>
+        <button className="chip" onClick={() => onChange(value + 15)} title="Turn 15 degrees clockwise">
+          {"↻ 15"}
+        </button>
+        {[0, 90, 180, 270].map((a) => (
+          <button key={a} className={`chip ${Math.abs(angleGap(value, a)) < 0.5 ? "chip-on" : ""}`} onClick={() => onChange(a)}>
+            {a}
+            {"°"}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function IslandInspector({ island, update, turn, remove }: { island: Island; update: (p: Partial<Island>) => void; turn: (angle: number) => void; remove: () => void }) {
   return (
     <div className="inspector">
       <div className="insp-head">
         <div className="insp-label">{island.name}</div>
-        <div className="muted">Drag it in the top view, or type its position.</div>
+        <div className="muted">Drag it in the top view, or type its position. The grip behind it turns it, or press R.</div>
       </div>
       <label className="field">
         <span className="field-label">Name</span>
@@ -1133,25 +1402,16 @@ function IslandInspector({ island, update, remove }: { island: Island; update: (
         <LengthInput id="is-y" label="Down from Wall A" value={island.y} onChange={(v) => update({ y: v })} />
       </div>
       <div className="field">
-        <span className="field-label">Cabinet fronts face (in the top view)</span>
-        <div className="chips">
-          {(
-            [
-              [0, "Down"],
-              [90, "Left"],
-              [180, "Up"],
-              [270, "Right"],
-            ] as [Island["rotation"], string][]
-          ).map(([r, label]) => (
-            <button key={r} className={`chip ${island.rotation === r ? "chip-on" : ""}`} onClick={() => update({ rotation: r })}>
-              {label}
-            </button>
-          ))}
-        </div>
+        <span className="field-label">Angle</span>
+        <AngleInput id="is-ang" value={island.rotation} onChange={turn} />
+        <p className="muted">
+          The run points this way in the top view, and the fronts face a quarter turn clockwise from it. At {Math.round(wrapAngle(island.rotation))}
+          {"°"} the fronts face {facing(island.rotation)}.
+        </p>
       </div>
       <div className="insp-actions">
         <button className="btn btn-danger" onClick={remove}>
-          Remove island
+          Remove {island.name}
         </button>
       </div>
     </div>

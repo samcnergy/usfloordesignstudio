@@ -16,6 +16,7 @@ Next.js 16 (App Router), React 19, TypeScript strict, Supabase (Postgres, Auth, 
 |---|---|
 | `src/lib/types.ts` | Design data model. All lengths are inches. |
 | `src/lib/geometry.ts` | Walls and islands as "runs", placement, overlap and blocking checks, shop labels (B24, W3030). |
+| `src/lib/place.ts` | Moving pieces: sliding along a wall, lifting one onto the open floor, turning a run, and joining a wall again. |
 | `src/lib/draw.ts` | Drawing a room with the mouse: snapping, typed lengths and angles, and turning the corners into walls. |
 | `src/lib/units.ts` | Inch fractions in and out (`34 1/2"`, `12'-6"`). |
 | `src/lib/standard-catalog.ts` | Sample catalog for the development sandbox only. |
@@ -37,6 +38,8 @@ Next.js 16 (App Router), React 19, TypeScript strict, Supabase (Postgres, Auth, 
 The top view has x to the right and y down, with the origin at the left end of Wall A. A room is a list of walls walked clockwise, each with a length, the corner angle inside the room at its end (90 normal, 270 the inside corner of an L, 135 a cut corner) and an open flag for a side with no wall. The last wall always closes the shape, so its length and the corners around it are worked out (`roomShape` in `geometry.ts`). Walls keep a stable id and get their letter from their position. A room drawn with the mouse that has no level top wall keeps its angle in `rotation`, the direction of Wall A. Designs saved before this stored only width and depth; `normalizeRoom` turns those into walls A to D.
 
 Each wall or island is a run with an origin at its left end (as seen standing in the room facing it), a direction `u` along the run and a direction `n` into the room. A cabinet's position is its offset along the run, so walls and islands share one placement model, and a front view's x axis is simply that offset.
+
+A run that is not a wall stands anywhere on the floor at any angle, and a piece dragged a foot clear of its wall gets a floor run of its own, so it can be moved and turned freely. Those floor runs are marked `auto` and disappear once nothing is left on them; a piece brought back against a wall joins that wall again.
 
 ## Catalog
 

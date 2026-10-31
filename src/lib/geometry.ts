@@ -232,23 +232,38 @@ export function roomCenter(room: Room): Vec {
   return { x: cx / (3 * a), y: cy / (3 * a) };
 }
 
-export function islandUnit(rotation: Island["rotation"]): Vec {
-  switch (rotation) {
-    case 0:
-      return { x: 1, y: 0 };
-    case 90:
-      return { x: 0, y: 1 };
-    case 180:
-      return { x: -1, y: 0 };
-    case 270:
-      return { x: 0, y: -1 };
-  }
+/** Direction a run points, from its angle in degrees clockwise from pointing right. */
+export function islandUnit(rotation: number): Vec {
+  const r = rad(rotation);
+  return { x: Math.cos(r), y: Math.sin(r) };
+}
+
+/** Degrees clockwise from pointing right, as stored on a run. */
+export function angleOf(u: Vec): number {
+  return wrapAngle((Math.atan2(u.y, u.x) * 180) / Math.PI);
+}
+
+/** The same angle written between 0 and 360. */
+export function wrapAngle(deg: number): number {
+  return ((roundAngle(deg) % 360) + 360) % 360;
+}
+
+/** How far apart two angles are, between -180 and 180. */
+export function angleGap(a: number, b: number): number {
+  return ((((a - b) % 360) + 540) % 360) - 180;
 }
 
 export function islandLength(design: DesignData, islandId: string): number {
   let len = 0;
   for (const it of design.items) if (it.run === islandId) len = Math.max(len, it.offset + it.width);
   return Math.max(len, ISLAND_MIN_LENGTH);
+}
+
+/** How deep a run is: the deepest piece on it, and never less than a counter. */
+export function islandDepth(design: DesignData, islandId: string): number {
+  let depth = 24;
+  for (const it of design.items) if (it.run === islandId) depth = Math.max(depth, it.depth);
+  return depth;
 }
 
 export function islandFrame(design: DesignData, island: Island): RunFrame {
@@ -308,9 +323,39 @@ export function itemRect(item: PlacedItem, frame: RunFrame): Rect {
 /** Rectangle of the whole island including any pieces, for drawing its outline. */
 export function islandRect(design: DesignData, island: Island): Rect {
   const frame = islandFrame(design, island);
-  let depth = 24;
-  for (const it of design.items) if (it.run === island.id) depth = Math.max(depth, it.depth);
-  return runRect(frame, 0, frame.length, 0, depth);
+  return runRect(frame, 0, frame.length, 0, islandDepth(design, island.id));
+}
+
+/** Middle of a run's floor area. A run turns around this point, so it stays put. */
+export function runPivot(design: DesignData, island: Island): Vec {
+  const frame = islandFrame(design, island);
+  return pointOn(frame, frame.length / 2, islandDepth(design, island.id) / 2);
+}
+
+/** Where a piece stands in room coordinates: the left end of its back line, and the angle it runs at. */
+export function itemPlacement(design: DesignData, item: PlacedItem): { x: number; y: number; angle: number } | null {
+  const frame = runFrame(design, item.run);
+  if (!frame) return null;
+  const p = pointOn(frame, item.offset, 0);
+  return { x: p.x, y: p.y, angle: angleOf(frame.u) };
+}
+
+/** The piece's own middle on the floor, for turning it or reading its position. */
+export function itemCenter(design: DesignData, item: PlacedItem): Vec | null {
+  const frame = runFrame(design, item.run);
+  return frame ? pointOn(frame, item.offset + item.width / 2, item.depth / 2) : null;
+}
+
+/** Inside the room, measured to the inside faces of the walls. */
+export function insideRoom(room: Room, p: Vec): boolean {
+  const pts = roomShape(room).inner;
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const a = pts[i];
+    const b = pts[j];
+    if (a.y > p.y !== b.y > p.y && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
 }
 
 /** Convex outlines overlap by more than a hair (separating axis test). */
@@ -388,6 +433,12 @@ export function findProblems(design: DesignData): Problem[] {
     const [, v1] = verticalSpan(it);
     if (v1 > design.room.ceiling + EPS) {
       problems.push({ ids: [it.id], message: `${itemLabel(it)} is taller than the ceiling` });
+    }
+    if (f?.kind === "island") {
+      const middle = itemCenter(design, it);
+      if (middle && !insideRoom(design.room, middle)) {
+        problems.push({ ids: [it.id], message: `${itemLabel(it)} stands outside the room` });
+      }
     }
   }
 

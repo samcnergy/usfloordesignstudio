@@ -11,7 +11,8 @@ import { CabinetFront } from "./CabinetFront";
 import { DimH, DimV } from "./dims";
 import { PaintDefs, PROBLEM, SELECT, counterPaint, finishPaint } from "./paint";
 
-export type DrawTarget = { kind: "item" | "opening" | "island" | "wall"; id: string };
+// "turn" is the grip behind a free standing run in the top view; its id is the run's.
+export type DrawTarget = { kind: "item" | "opening" | "island" | "wall" | "turn"; id: string };
 
 export interface ViewProps {
   design: DesignData;
@@ -80,6 +81,25 @@ function OpeningFront({ op, Y }: { op: Opening; Y: (z: number) => number }) {
   );
 }
 
+/**
+ * Lays the piece labels out in rows so they never sit on top of each other.
+ * A label that would run into the one before it drops to the next row, with a
+ * leader line back to its piece.
+ */
+function labelRows(items: PlacedItem[], size: number): { item: PlacedItem; row: number; x: number }[] {
+  const ends: number[] = [];
+  return [...items]
+    .map((it) => ({ item: it, x: it.offset + it.width / 2 }))
+    .sort((a, b) => a.x - b.x)
+    .map(({ item, x }) => {
+      const half = (itemLabel(item).length * size * 0.56) / 2;
+      let row = 0;
+      while (ends[row] !== undefined && x - half < ends[row] + size * 0.5) row++;
+      ends[row] = x + half;
+      return { item, row, x };
+    });
+}
+
 function Faucet({ cx, Y }: { cx: number; Y: (z: number) => number }) {
   return (
     <path
@@ -102,10 +122,6 @@ export function ElevationView({ design, catalog, run, selectedId, problemIds, on
   // islands are drawn without a wall behind them, so the view only needs to clear the tallest piece
   const H = island ? Math.max(48, Math.ceil(islandTop + 8)) : design.room.ceiling;
   const fs = Math.max(2.4, Math.min(4.2, Math.max(L, H) / 52));
-  const ML = fs * 6.5;
-  const MR = fs * 2;
-  const MT = fs * 5;
-  const MB = fs * 9;
   const Y = (z: number) => H - z;
 
   const items = design.items.filter((i) => i.run === run);
@@ -115,6 +131,18 @@ export function ElevationView({ design, catalog, run, selectedId, problemIds, on
   const counter = counterPaint(catalog, design);
   const counterThick = catalog.countertops.find((c) => c.id === design.countertopId)?.thickness ?? 1.5;
   const runs = counterRuns(items);
+
+  // labels first: the rows they need decide how much room the margins have to leave
+  const labelSize = fs * 0.8;
+  const lowerLabels = labelRows(lower, labelSize);
+  const upperLabels = labelRows(upper, labelSize);
+  const labelStep = labelSize * 1.35;
+  const lowerExtra = Math.max(0, ...lowerLabels.map((l) => l.row)) * labelStep;
+  const upperExtra = Math.max(0, ...upperLabels.map((l) => l.row)) * labelStep;
+  const ML = fs * 6.5;
+  const MR = fs * 2;
+  const MT = fs * 5 + upperExtra;
+  const MB = fs * 9 + lowerExtra;
 
   // height marks for the left dimension string
   const marks = new Set<number>(island ? [0] : [0, H]);
@@ -207,29 +235,32 @@ export function ElevationView({ design, catalog, run, selectedId, problemIds, on
       {/* floor and ceiling lines */}
       <line x1={-2} x2={L + 2} y1={Y(0)} y2={Y(0)} stroke="#1A1D1F" strokeWidth={0.9} />
 
-      {/* labels under the floor line */}
-      {[...lower, ...upper].map((it) => (
-        <text
-          key={`l-${it.id}`}
-          x={it.offset + it.width / 2}
-          y={it.mountHeight > 0 ? -fs * 0.6 : H + fs * 1.5}
-          fontSize={fs * 0.85}
-          textAnchor="middle"
-          fill="#1A1D1F"
-          fontWeight={600}
-        >
-          {it.width >= fs * 2.2 ? itemLabel(it) : ""}
-        </text>
+      {/* labels: floor pieces under the floor line, wall-hung pieces above the wall */}
+      {lowerLabels.map(({ item, row, x }) => (
+        <g key={`l-${item.id}`}>
+          {row > 0 && <line x1={x} y1={H + fs * 0.6} x2={x} y2={H + fs * 1.2 + row * labelStep} stroke="#9A9DA0" strokeWidth={0.2} />}
+          <text x={x} y={H + fs * 1.5 + row * labelStep} fontSize={labelSize} textAnchor="middle" fill="#1A1D1F" fontWeight={600}>
+            {itemLabel(item)}
+          </text>
+        </g>
+      ))}
+      {upperLabels.map(({ item, row, x }) => (
+        <g key={`lu-${item.id}`}>
+          {row > 0 && <line x1={x} y1={-fs * 0.3} x2={x} y2={-fs * 0.9 - row * labelStep} stroke="#9A9DA0" strokeWidth={0.2} />}
+          <text x={x} y={-fs * 0.6 - row * labelStep} fontSize={labelSize} textAnchor="middle" fill="#1A1D1F" fontWeight={600}>
+            {itemLabel(item)}
+          </text>
+        </g>
       ))}
 
       {/* chain dimensions: floor pieces below, wall-hung pieces above */}
       {lower.map((it) => (
-        <DimH key={`d-${it.id}`} x0={it.offset} x1={it.offset + it.width} y={H + fs * 3.6} fs={fs * 0.8} />
+        <DimH key={`d-${it.id}`} x0={it.offset} x1={it.offset + it.width} y={H + fs * 3.6 + lowerExtra} fs={fs * 0.8} />
       ))}
       {upper.map((it) => (
-        <DimH key={`du-${it.id}`} x0={it.offset} x1={it.offset + it.width} y={-fs * 2.6} fs={fs * 0.8} />
+        <DimH key={`du-${it.id}`} x0={it.offset} x1={it.offset + it.width} y={-fs * 2.6 - upperExtra} fs={fs * 0.8} />
       ))}
-      <DimH x0={0} x1={L} y={H + fs * 6.8} fs={fs} label={`${fmtIn(L)}`} />
+      <DimH x0={0} x1={L} y={H + fs * 6.8 + lowerExtra} fs={fs} label={`${fmtIn(L)}`} />
 
       {sortedMarks.slice(0, -1).map((m, i) => (
         <DimV key={`h-${m}`} y0={Y(m)} y1={Y(sortedMarks[i + 1])} x={-fs * 1.6} fs={fs * 0.75} />

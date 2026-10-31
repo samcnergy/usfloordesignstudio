@@ -4,8 +4,8 @@
 // Wall-hung pieces are drawn dashed over the floor pieces, the usual plan convention.
 
 import type { PointerEvent as ReactPointerEvent } from "react";
-import type { Opening, PlacedItem } from "@/lib/types";
-import { allFrames, islandFrame, islandRect, itemLabel, itemQuad, pointOn, pointsAttr, roomShape, runQuad, type RunFrame } from "@/lib/geometry";
+import type { DesignData, Island, Opening, PlacedItem } from "@/lib/types";
+import { allFrames, islandDepth, islandFrame, islandRect, itemLabel, itemQuad, pointOn, pointsAttr, roomShape, runQuad, type RunFrame } from "@/lib/geometry";
 import { fmtFtIn, fmtIn } from "@/lib/units";
 import { DimAligned } from "./dims";
 import type { DrawTarget, ViewProps } from "./ElevationView";
@@ -42,6 +42,23 @@ function OpeningPlan({ op, frame, t }: { op: Opening; frame: RunFrame; t: number
   return <g>{elems}</g>;
 }
 
+/** Grip behind a free standing run: drag it to turn the run to any angle. */
+function TurnHandle({ design, run, fs, onDown, live }: { design: DesignData; run: Island; fs: number; onDown: (e: ReactPointerEvent<SVGElement>) => void; live: boolean }) {
+  const frame = islandFrame(design, run);
+  const depth = islandDepth(design, run.id);
+  const from = pointOn(frame, frame.length / 2, depth / 2);
+  const grip = pointOn(frame, frame.length / 2, -(depth / 2 + fs * 2.6));
+  return (
+    <g onPointerDown={onDown} style={{ cursor: live ? "grab" : undefined }}>
+      <line x1={from.x} y1={from.y} x2={grip.x} y2={grip.y} stroke={SELECT} strokeWidth={0.4} strokeDasharray="1.5 1" />
+      <circle cx={grip.x} cy={grip.y} r={fs * 1.15} fill="#FFFFFF" stroke={SELECT} strokeWidth={0.7} />
+      <text x={grip.x} y={grip.y + fs * 0.42} fontSize={fs * 1.2} textAnchor="middle" fill={SELECT} style={{ pointerEvents: "none" }}>
+        {"↻"}
+      </text>
+    </g>
+  );
+}
+
 export function PlanView({ design, catalog, selectedId, problemIds, onTargetDown, onBackgroundDown, className, selectedRun }: ViewProps & { selectedRun?: string | null }) {
   const t = design.room.wallThickness;
   const shape = roomShape(design.room);
@@ -58,6 +75,10 @@ export function PlanView({ design, catalog, selectedId, problemIds, onTargetDown
 
   const lower = design.items.filter((i) => i.mountHeight === 0);
   const upper = design.items.filter((i) => i.mountHeight > 0);
+
+  // the selected island, or the floor run the selected piece stands on, gets a turn handle
+  const selectedItemRun = design.items.find((i) => i.id === selectedId)?.run;
+  const turnRun = onTargetDown ? (design.islands.find((i) => i.id === selectedId || i.id === selectedItemRun) ?? null) : null;
 
   const drawItem = (it: PlacedItem, isUpper: boolean) => {
     const frame = frames.get(it.run);
@@ -154,6 +175,9 @@ export function PlanView({ design, catalog, selectedId, problemIds, onTargetDown
       })}
 
       {design.islands.map((isl) => {
+        const on = design.items.filter((i) => i.run === isl.id);
+        // a single piece standing on its own floor run needs no box around it
+        if (isl.auto && on.length <= 1) return null;
         const r = islandRect(design, isl);
         const frame = islandFrame(design, isl);
         const back = pointOn(frame, frame.length / 2, -fs * 0.9);
@@ -172,6 +196,8 @@ export function PlanView({ design, catalog, selectedId, problemIds, onTargetDown
 
       {lower.map((it) => drawItem(it, false))}
       {upper.map((it) => drawItem(it, true))}
+
+      {turnRun && <TurnHandle design={design} run={turnRun} fs={fs} onDown={down({ kind: "turn", id: turnRun.id })} live={!!onTargetDown} />}
 
       {shape.walls.map((w) => {
         const mid = pointOn(w, w.length / 2, -(t + fs * 3.6));
