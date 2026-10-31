@@ -6,6 +6,7 @@
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { Catalog, DesignData, Opening, PlacedItem } from "@/lib/types";
 import { isWall, itemLabel, runFrame } from "@/lib/geometry";
+import { atTop, cabinetTop } from "@/lib/place";
 import { fmtIn } from "@/lib/units";
 import { CabinetFront } from "./CabinetFront";
 import { DimH, DimV } from "./dims";
@@ -27,11 +28,9 @@ export interface ViewProps {
 const COUNTER_STYLES = new Set(["base", "drawer_base", "sink_base", "blind_corner_base", "lazy_susan", "open_shelf", "vanity_combo", "dishwasher"]);
 const BASE_TOP = 34.5;
 
-function counterRuns(items: PlacedItem[]): [number, number][] {
-  const spans = items
-    .filter((i) => COUNTER_STYLES.has(i.style) && i.mountHeight === 0 && Math.abs(i.height - BASE_TOP) < 0.01)
-    .map((i) => [i.offset, i.offset + i.width] as [number, number])
-    .sort((a, b) => a[0] - b[0]);
+/** Pieces side by side become one span, so a countertop or a crown runs across them all. */
+function mergeSpans(items: PlacedItem[]): [number, number][] {
+  const spans = items.map((i) => [i.offset, i.offset + i.width] as [number, number]).sort((a, b) => a[0] - b[0]);
   const merged: [number, number][] = [];
   for (const s of spans) {
     const last = merged[merged.length - 1];
@@ -39,6 +38,10 @@ function counterRuns(items: PlacedItem[]): [number, number][] {
     else merged.push([...s]);
   }
   return merged;
+}
+
+function counterRuns(items: PlacedItem[]): [number, number][] {
+  return mergeSpans(items.filter((i) => COUNTER_STYLES.has(i.style) && i.mountHeight === 0 && Math.abs(i.height - BASE_TOP) < 0.01));
 }
 
 function OpeningFront({ op, Y }: { op: Opening; Y: (z: number) => number }) {
@@ -131,6 +134,12 @@ export function ElevationView({ design, catalog, run, selectedId, problemIds, on
   const counter = counterPaint(catalog, design);
   const counterThick = catalog.countertops.find((c) => c.id === design.countertopId)?.thickness ?? 1.5;
   const runs = counterRuns(items);
+  // crown molding, drawn as a band on top of the wall cabinets that run to the top
+  const crown = Math.max(0, design.crown ?? 0);
+  const crownTop = cabinetTop(design);
+  const crowned = items.filter((i) => atTop(design, i, crownTop));
+  const crownRuns = crown > 0 ? mergeSpans(crowned) : [];
+  const crownPaint = crowned.length ? finishPaint(catalog, design, crowned[0]) : null;
 
   // labels first: the rows they need decide how much room the margins have to leave
   const labelSize = fs * 0.8;
@@ -147,6 +156,7 @@ export function ElevationView({ design, catalog, run, selectedId, problemIds, on
   // height marks for the left dimension string
   const marks = new Set<number>(island ? [0] : [0, H]);
   if (runs.length) marks.add(BASE_TOP + counterThick);
+  if (crownRuns.length) marks.add(crownTop);
   for (const it of items) {
     if (it.mountHeight > 0) {
       marks.add(it.mountHeight);
@@ -231,6 +241,14 @@ export function ElevationView({ design, catalog, run, selectedId, problemIds, on
         ))}
 
       {upper.map(drawItem)}
+
+      {crownPaint &&
+        crownRuns.map(([s0, s1], i) => (
+          <g key={`crown-${i}`}>
+            <rect x={s0} y={Y(crownTop + crown)} width={s1 - s0} height={crown} fill={crownPaint.fill} stroke="#3C3F42" strokeWidth={0.3} />
+            <line x1={s0} x2={s1} y1={Y(crownTop + crown * 0.55)} y2={Y(crownTop + crown * 0.55)} stroke={crownPaint.ink} strokeOpacity={0.5} strokeWidth={0.25} />
+          </g>
+        ))}
 
       {/* floor and ceiling lines */}
       <line x1={-2} x2={L + 2} y1={Y(0)} y2={Y(0)} stroke="#1A1D1F" strokeWidth={0.9} />

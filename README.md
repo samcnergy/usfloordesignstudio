@@ -39,6 +39,8 @@ The top view has x to the right and y down, with the origin at the left end of W
 
 Each wall or island is a run with an origin at its left end (as seen standing in the room facing it), a direction `u` along the run and a direction `n` into the room. A cabinet's position is its offset along the run, so walls and islands share one placement model, and a front view's x axis is simply that offset.
 
+Wall cabinets hang so their tops are at the top of the room: flush with the ceiling, or `crown` inches below it when the design has crown molding. Adding a crown molding order item sets that height and brings the wall cabinets that were at the top down with it; the crown prints as a band across them in the front views.
+
 A run that is not a wall stands anywhere on the floor at any angle, and a piece dragged a foot clear of its wall gets a floor run of its own, so it can be moved and turned freely. Those floor runs are marked `auto` and disappear once nothing is left on them; a piece brought back against a wall joins that wall again.
 
 ## Catalog

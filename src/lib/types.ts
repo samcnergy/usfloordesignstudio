@@ -210,6 +210,10 @@ export interface DesignData {
   items: PlacedItem[];
   lineId: string | null; // cabinet line the designer is working from
   finishId: string | null;
+  // Crown molding on top of the wall cabinets. The cabinets stop this far below
+  // the ceiling so the crown fits above them. 0 means no crown: they run flush
+  // to the ceiling.
+  crown: number;
   countertopId: string | null;
   photos: DesignPhoto[];
   extras: ExtraItem[];
@@ -237,6 +241,7 @@ export function emptyDesign(): DesignData {
     items: [],
     lineId: null,
     finishId: null,
+    crown: 0,
     countertopId: null,
     photos: [],
     extras: [],

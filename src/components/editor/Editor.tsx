@@ -25,7 +25,7 @@ import {
   wrapAngle,
   type Vec,
 } from "@/lib/geometry";
-import { dragInPlan, dropEmptyRuns, floorSpotFor, itemRun, moveRun, putOnFloor, slideAlongRun, standsAlone, turnPivot, turnRun } from "@/lib/place";
+import { cabinetTop, dragInPlan, dropEmptyRuns, floorSpotFor, itemRun, levelWallCabinets, moveRun, putOnFloor, setCrown, slideAlongRun, standsAlone, turnPivot, turnRun } from "@/lib/place";
 import type { Catalog, Category, DesignData, DesignRecord, ExtraItem, Island, Opening, OpeningType, PlacedItem, Product, ProductLine, Room } from "@/lib/types";
 import { useHistory } from "@/lib/useHistory";
 import { fmtIn, snap } from "@/lib/units";
@@ -59,6 +59,22 @@ export function lineTitle(catalog: Catalog, line: ProductLine | undefined): stri
 function dims(p: Pick<Product, "width" | "height" | "depth">): string {
   if (p.width === null) return "";
   return [p.width, p.height, p.depth].map((v) => (v === null ? "?" : fmtIn(v, false))).join(" x ");
+}
+
+/** Crown, light rail and other molding that sits on top of the wall cabinets. */
+function isCrown(p: Pick<Product, "sku" | "name" | "description">): boolean {
+  return /crown|cornice/i.test(`${p.sku} ${p.name} ${p.description ?? ""}`);
+}
+
+/**
+ * How tall the molding stands on the cabinet. Molding is listed by its profile size
+ * in the SKU (CM4 is a 4" crown) and its catalog sizes are the stick, so the SKU wins,
+ * then a width or height that reads like a profile, then a standard 3 1/2".
+ */
+function crownHeight(p: Pick<Product, "sku" | "width" | "height">): number {
+  const fromSku = Number(p.sku.match(/(\d+(?:\.\d+)?)/)?.[1]);
+  for (const v of [fromSku, p.width, p.height]) if (v !== null && Number.isFinite(v) && v >= 1 && v <= 9) return v;
+  return 3.5;
 }
 
 const uid = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Math.random().toString(36).slice(2));
@@ -233,15 +249,12 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
         .find((r) => !hoods.some((h) => h.offset < r.offset + r.width && r.offset < h.offset + h.width));
       if (range) offset = range.offset + (range.width - width) / 2;
     }
-    // A new wall piece lines up with the wall cabinets already on this run, so a bridge
-    // between pieces that run to the ceiling sits flush with them instead of dropping to
-    // the standard 84" top. Nothing is ever placed through the ceiling.
+    // Wall cabinets, bridges included, run to the top: flush with the ceiling, or just
+    // under the crown molding when the design has some. Anything else hangs where the
+    // catalog says, but never through the ceiling.
     let mountHeight = mount;
     if (mountHeight > 0) {
-      const tops = design.items.filter((i) => i.run === run && i.category === "wall" && i.mountHeight > 0).map((i) => i.mountHeight + i.height);
-      const top = tops.length ? Math.max(...tops) : null;
-      if (top !== null && top - height >= 1) mountHeight = top - height;
-      if (mountHeight + height > design.room.ceiling) mountHeight = Math.max(0, design.room.ceiling - height);
+      mountHeight = p.category === "wall" ? Math.max(0, cabinetTop(design) - height) : Math.min(mountHeight, Math.max(0, design.room.ceiling - height));
     }
     const line = activeCatalog.lines.find((l) => l.id === p.line_id);
     const item: PlacedItem = {
@@ -319,13 +332,21 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
 
   const addExtra = (p: Product) => {
     const line = activeCatalog.lines.find((l) => l.id === p.line_id);
+    // Crown molding sits on top of the wall cabinets, so the first piece of it
+    // drops them far enough to leave room for it.
+    const crown = isCrown(p) && !design.crown ? crownHeight(p) : 0;
     apply((d) => {
-      const existing = d.extras.find((x) => x.productId === p.id && x.finishId === null);
-      if (existing) return { ...d, extras: d.extras.map((x) => (x === existing ? { ...x, qty: x.qty + 1 } : x)) };
+      const withCrown = crown ? setCrown(d, crown) : d;
+      const existing = withCrown.extras.find((x) => x.productId === p.id && x.finishId === null);
+      if (existing) return { ...withCrown, extras: withCrown.extras.map((x) => (x === existing ? { ...x, qty: x.qty + 1 } : x)) };
       const extra: ExtraItem = { id: uid(), productId: p.id, code: p.sku, name: p.name, lineName: lineTitle(activeCatalog, line), qty: 1, finishId: null };
-      return { ...d, extras: [...d.extras, extra] };
+      return { ...withCrown, extras: [...withCrown.extras, extra] };
     });
-    flash(`${p.sku} added to the order list. It prints with the cabinet list but is not drawn.`);
+    flash(
+      crown
+        ? `${p.sku} added to the order list. The wall cabinets dropped to ${fmtIn(design.room.ceiling - crown)} so the ${fmtIn(crown)} crown fits above them.`
+        : `${p.sku} added to the order list. It prints with the cabinet list but is not drawn.`,
+    );
   };
 
   /** Swap a placed piece for another catalog product, keeping its place in the run. */
@@ -1133,7 +1154,8 @@ function ItemInspector({
   const wallHung = item.mountHeight > 0;
   const onFloorRun = itemRun(design, item);
   const alone = standsAlone(design, item);
-  const atCeiling = Math.abs(item.mountHeight + item.height - design.room.ceiling) < 0.01;
+  const top = cabinetTop(design);
+  const atTheTop = Math.abs(item.mountHeight + item.height - top) < 0.01;
   // the top the other wall cabinets on this run line up at, if they agree on one
   const otherTops = design.items.filter((i) => i.id !== item.id && i.run === item.run && i.category === "wall" && i.mountHeight > 0).map((i) => i.mountHeight + i.height);
   const neighborTop = otherTops.length ? Math.max(...otherTops) : null;
@@ -1232,8 +1254,8 @@ function ItemInspector({
         <div className="field">
           <span className="field-label">Top of the piece</span>
           <div className="chips">
-            <button className={`chip ${atCeiling ? "chip-on" : ""}`} onClick={() => update({ mountHeight: Math.max(0, design.room.ceiling - item.height) })}>
-              Flush with ceiling
+            <button className={`chip ${atTheTop ? "chip-on" : ""}`} onClick={() => update({ mountHeight: Math.max(0, top - item.height) })}>
+              {design.crown ? "Up under the crown" : "Flush with ceiling"}
             </button>
             {neighborTop !== null && (
               <button className={`chip ${Math.abs(item.mountHeight + item.height - neighborTop) < 0.01 ? "chip-on" : ""}`} onClick={() => update({ mountHeight: Math.max(0, neighborTop - item.height) })}>
@@ -1242,7 +1264,8 @@ function ItemInspector({
             )}
           </div>
           <p className="muted">
-            Top is {fmtIn(item.mountHeight + item.height)} off the floor. Ceiling is {fmtIn(design.room.ceiling)}.
+            Top is {fmtIn(item.mountHeight + item.height)} off the floor. Ceiling is {fmtIn(design.room.ceiling)}
+            {design.crown ? `, less ${fmtIn(design.crown)} of crown` : ""}.
           </p>
         </div>
       )}
@@ -1469,6 +1492,27 @@ function DesignInspector({
             </button>
           ))}
         </div>
+      </div>
+      <div className="field">
+        <span className="field-label">Crown molding on the wall cabinets</span>
+        <LengthInput
+          id="d-crown"
+          label="Crown height (0 for none)"
+          value={design.crown ?? 0}
+          min={0}
+          max={12}
+          onChange={(v) => apply((d) => setCrown(d, v))}
+          hint={
+            design.crown
+              ? `Wall cabinets stop at ${fmtIn(design.room.ceiling - design.crown)}, leaving room for the crown.`
+              : `Wall cabinets run flush with the ${fmtIn(design.room.ceiling)} ceiling.`
+          }
+        />
+        {design.items.some((i) => i.category === "wall" && i.mountHeight > 0 && Math.abs(i.mountHeight + i.height - (design.room.ceiling - (design.crown ?? 0))) > 0.01) && (
+          <button className="btn btn-secondary" onClick={() => apply((d) => levelWallCabinets(d, d.room.ceiling - (d.crown ?? 0)))}>
+            Take every wall cabinet to the top
+          </button>
+        )}
       </div>
       <div className="field">
         <span className="field-label">Countertop</span>

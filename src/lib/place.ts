@@ -25,6 +25,39 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
 }
 
+/** Height the wall cabinets run to: the ceiling, less any crown molding sitting on top of them. */
+export function cabinetTop(design: DesignData): number {
+  return design.room.ceiling - Math.max(0, design.crown ?? 0);
+}
+
+/** A wall cabinet is level with the top when its own top is there, give or take a hair. */
+export function atTop(design: DesignData, item: PlacedItem, top = cabinetTop(design)): boolean {
+  return item.category === "wall" && item.mountHeight > 0 && Math.abs(item.mountHeight + item.height - top) < 0.01;
+}
+
+/**
+ * Hangs the wall cabinets so their tops are at `to`. With `from` given, only the
+ * ones that were level with that height move, so a cabinet hung lower on purpose
+ * stays where the designer put it.
+ */
+export function levelWallCabinets(design: DesignData, to: number, from?: number): DesignData {
+  return {
+    ...design,
+    items: design.items.map((i) => {
+      if (i.category !== "wall" || i.mountHeight <= 0) return i;
+      if (from !== undefined && Math.abs(i.mountHeight + i.height - from) > 0.01) return i;
+      return { ...i, mountHeight: Math.max(0, to - i.height) };
+    }),
+  };
+}
+
+/** Sets the crown height and brings the wall cabinets that were at the old top along with it. */
+export function setCrown(design: DesignData, crown: number): DesignData {
+  const before = cabinetTop(design);
+  const next = { ...design, crown: Math.max(0, crown) };
+  return levelWallCabinets(next, cabinetTop(next), before);
+}
+
 export interface Spot {
   x: number;
   y: number;

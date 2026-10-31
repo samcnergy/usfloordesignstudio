@@ -116,6 +116,7 @@ function normalizeData(raw: unknown): DesignData {
     photos: d.photos ?? [],
     extras: d.extras ?? [],
     lineId: d.lineId ?? null,
+    crown: typeof d.crown === "number" ? d.crown : 0,
   };
 }
 
