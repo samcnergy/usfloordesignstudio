@@ -16,6 +16,7 @@ import {
   isWall,
   itemLabel,
   itemQuad,
+  pointOn,
   roomCenter,
   roomShape,
   runFrame,
@@ -25,7 +26,7 @@ import {
   wrapAngle,
   type Vec,
 } from "@/lib/geometry";
-import { cabinetTop, dragInPlan, dropEmptyRuns, floorSpotFor, itemRun, levelWallCabinets, moveRun, putOnFloor, setCrown, slideAlongRun, standsAlone, turnPivot, turnRun } from "@/lib/place";
+import { cabinetTop, copySelection, dragInPlan, dropEmptyRuns, floorSpotFor, itemRun, levelWallCabinets, moveGroup, moveRun, pasteClipboard, putOnFloor, setCrown, slideAlongRun, standsAlone, turnPivot, turnRun, type Clipboard } from "@/lib/place";
 import type { Catalog, Category, DesignData, DesignRecord, ExtraItem, Island, Opening, OpeningType, PlacedItem, Product, ProductLine, Room } from "@/lib/types";
 import { useHistory } from "@/lib/useHistory";
 import { fmtIn, snap } from "@/lib/units";
@@ -101,7 +102,23 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
   });
   const [tab, setTab] = useState<Tab>("cabinets");
   const [view, setView] = useState<string>("plan");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // The selection: one piece the inspector shows, and any others picked with it
+  // (Shift or Ctrl/Cmd click, or a box dragged in the top view).
+  const [selectedId, setPrimary] = useState<string | null>(null);
+  const [others, setOthers] = useState<string[]>([]);
+  const setSelectedId = useCallback((id: string | null) => {
+    setPrimary(id);
+    setOthers([]);
+  }, []);
+  const selectAll = useCallback((ids: string[]) => {
+    setPrimary(ids[0] ?? null);
+    setOthers(ids.slice(1));
+  }, []);
+  const selectedIds = useMemo(() => new Set([...(selectedId ? [selectedId] : []), ...others]), [selectedId, others]);
+  const multi = selectedIds.size > 1;
+  const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const clipboard = useRef<Clipboard | null>(null);
+  const pastes = useRef(0);
   const [activeRun, setActiveRun] = useState<string>("A");
   const [notice, setNotice] = useState<string | null>(null);
   const [printing, setPrinting] = useState(false);
@@ -192,18 +209,26 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
     [apply],
   );
 
-  const removeSelected = useCallback(() => {
-    if (!selectedId) return;
-    apply((d) =>
-      dropEmptyRuns({
-        ...d,
-        items: d.items.filter((i) => i.id !== selectedId && i.run !== selectedId),
-        openings: d.openings.filter((o) => o.id !== selectedId),
-        islands: d.islands.filter((i) => i.id !== selectedId),
-      }),
-    );
-    setSelectedId(null);
-  }, [apply, selectedId]);
+  const removeIds = useCallback(
+    (ids: Set<string>) => {
+      if (!ids.size) return;
+      apply((d) =>
+        dropEmptyRuns({
+          ...d,
+          items: d.items.filter((i) => !ids.has(i.id) && !ids.has(i.run)),
+          openings: d.openings.filter((o) => !ids.has(o.id)),
+          islands: d.islands.filter((i) => !ids.has(i.id)),
+        }),
+      );
+      setSelectedId(null);
+    },
+    [apply, setSelectedId],
+  );
+  const removeSelected = useCallback(() => removeIds(selectedIds), [removeIds, selectedIds]);
+  /** The inspector's Remove takes away only the piece it shows. */
+  const removeShown = useCallback(() => {
+    if (selectedId) removeIds(new Set([selectedId]));
+  }, [removeIds, selectedId]);
 
   /** Lifts a piece off its wall onto a floor run of its own, out in front of where it stood. */
   const liftOntoFloor = useCallback(
@@ -420,7 +445,11 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
     landedOn: string | null; // the run the piece ended up on, so new pieces follow it there
     moved: boolean;
     cycleTo: string | null;
+    group: Set<string> | null; // several pieces dragged together
+    collapseTo: string | null; // a click without dragging on one of several selects just that one
   } | null>(null);
+  // a box dragged over the top view's empty floor selects what it touches
+  const boxDrag = useRef<{ svg: SVGSVGElement; start: { x: number; y: number }; additive: boolean; moved: boolean } | null>(null);
 
   const svgPoint = (svg: SVGSVGElement, clientX: number, clientY: number) => {
     const ctm = svg.getScreenCTM();
@@ -451,6 +480,8 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
         landedOn: null,
         moved: false,
         cycleTo: null,
+        group: null,
+        collapseTo: null,
       };
       return;
     }
@@ -479,7 +510,23 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
         if (idx !== -1) cycleTo = stack[(idx + 1) % stack.length].id;
       }
     }
-    setSelectedId(target.id);
+    // Shift or Ctrl/Cmd click adds a piece to the selection, or takes it out again
+    const additive = e.shiftKey || e.metaKey || e.ctrlKey;
+    let group: Set<string> | null = null;
+    let collapseTo: string | null = null;
+    if (additive) {
+      if (selectedIds.has(target.id)) {
+        selectAll([...selectedIds].filter((id) => id !== target.id));
+        return;
+      }
+      group = new Set([target.id, ...selectedIds]);
+      selectAll([...group]);
+    } else if (multi && selectedIds.has(target.id)) {
+      // dragging one of several moves them all
+      group = selectedIds;
+      collapseTo = target.id;
+      selectAll([target.id, ...[...selectedIds].filter((id) => id !== target.id)]);
+    } else setSelectedId(target.id);
     if (target.kind === "item") {
       const it = design.items.find((i) => i.id === target.id);
       if (it) setActiveRun(it.run);
@@ -508,12 +555,46 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
       newRunId: uid(),
       landedOn: null,
       moved: false,
-      cycleTo,
+      cycleTo: group ? null : cycleTo,
+      group: group && group.size > 1 ? group : null,
+      collapseTo,
     };
+  };
+
+  const boxIds = (d: DesignData, r: { x0: number; y0: number; x1: number; y1: number }) => {
+    const x0 = Math.min(r.x0, r.x1), x1 = Math.max(r.x0, r.x1), y0 = Math.min(r.y0, r.y1), y1 = Math.max(r.y0, r.y1);
+    const inBox = (p: Vec) => p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
+    const corners: Vec[] = [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
+    const ids: string[] = [];
+    for (const it of d.items) {
+      const f = runFrame(d, it.run);
+      if (!f) continue;
+      const q = itemQuad(it, f);
+      if (q.some(inBox) || corners.some((c) => insideQuad(c, q))) ids.push(it.id);
+    }
+    for (const op of d.openings) {
+      const f = runFrame(d, op.wall);
+      if (f && inBox(pointOn(f, op.offset + op.width / 2, 0))) ids.push(op.id);
+    }
+    return ids;
+  };
+
+  const handleBackgroundDown = (e: ReactPointerEvent<SVGSVGElement>) => {
+    if (e.button !== 0) return;
+    const svg = e.currentTarget;
+    boxDrag.current = { svg, start: svgPoint(svg, e.clientX, e.clientY), additive: e.shiftKey || e.metaKey || e.ctrlKey, moved: false };
   };
 
   useEffect(() => {
     const move = (e: PointerEvent) => {
+      const bx = boxDrag.current;
+      if (bx) {
+        const p = svgPoint(bx.svg, e.clientX, e.clientY);
+        if (!bx.moved && Math.hypot(p.x - bx.start.x, p.y - bx.start.y) < 1.5) return;
+        bx.moved = true;
+        setBox({ x0: bx.start.x, y0: bx.start.y, x1: p.x, y1: p.y });
+        return;
+      }
       const dr = drag.current;
       if (!dr) return;
       const p = svgPoint(dr.svg, e.clientX, e.clientY);
@@ -525,6 +606,11 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
         begin();
       }
       const { target } = dr;
+      if (dr.group) {
+        const group = dr.group;
+        preview((d) => (dr.viewKind === "plan" ? moveGroup(d, group, dx, dy) : moveGroup(d, group, 0, 0, dx)));
+        return;
+      }
       if (target.kind === "island") {
         preview((d) => moveRun(d, target.id, dr.startXY.x + dx, dr.startXY.y + dy));
         return;
@@ -558,12 +644,26 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
         return d;
       });
     };
-    const up = () => {
+    const up = (e: PointerEvent) => {
+      const bx = boxDrag.current;
+      if (bx) {
+        boxDrag.current = null;
+        if (!bx.moved) {
+          if (!bx.additive) setSelectedId(null);
+          return;
+        }
+        const p = svgPoint(bx.svg, e.clientX, e.clientY);
+        const hits = boxIds(design, { x0: bx.start.x, y0: bx.start.y, x1: p.x, y1: p.y });
+        selectAll(bx.additive ? [...new Set([...selectedIds, ...hits])] : hits);
+        setBox(null);
+        return;
+      }
       const dr = drag.current;
       if (dr?.moved) {
         commit();
         if (dr.landedOn) setActiveRun(dr.landedOn);
       } else if (dr?.cycleTo) setSelectedId(dr.cycleTo);
+      else if (dr?.collapseTo) setSelectedId(dr.collapseTo);
       drag.current = null;
     };
     window.addEventListener("pointermove", move);
@@ -574,7 +674,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", up);
     };
-  }, [begin, preview, commit]);
+  }, [begin, preview, commit, design, selectedIds, selectAll, setSelectedId]);
 
   // ---------- drawing the room ----------
   // pieces stay on the wall with the same letter, so a redrawn room needs at least that many walls
@@ -611,6 +711,39 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
         redo();
         return;
       }
+      // copy, cut, paste and duplicate; the copy keeps each piece's catalog snapshot
+      if (mod && ["c", "x", "v", "d", "a"].includes(e.key.toLowerCase())) {
+        const k = e.key.toLowerCase();
+        if (k === "a") {
+          e.preventDefault();
+          selectAll([...design.items.map((i) => i.id), ...design.openings.map((o) => o.id)]);
+          return;
+        }
+        if (k === "v") {
+          if (!clipboard.current) return;
+          e.preventDefault();
+          pastes.current += 1;
+          const out = pasteClipboard(design, clipboard.current, 24 * pastes.current, uid);
+          apply(() => out.design);
+          selectAll(out.ids);
+          return;
+        }
+        const clip = copySelection(design, selectedIds);
+        if (!clip) return;
+        e.preventDefault();
+        if (k === "d") {
+          const out = pasteClipboard(design, clip, 24, uid);
+          apply(() => out.design);
+          selectAll(out.ids);
+          return;
+        }
+        clipboard.current = clip;
+        pastes.current = 0;
+        const n = clip.items.length;
+        if (k === "x") removeSelected();
+        flash(`${k === "x" ? "Cut" : "Copied"} ${n} piece${n === 1 ? "" : "s"}. Press Ctrl/Cmd+V to paste.`);
+        return;
+      }
       if ((e.key === "Delete" || e.key === "Backspace") && selectedId) {
         e.preventDefault();
         removeSelected();
@@ -622,7 +755,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
         return;
       }
       // R turns a free standing piece or island; the arrows move or slide the selection
-      if (e.key.toLowerCase() === "r" && !mod) {
+      if (e.key.toLowerCase() === "r" && !mod && !multi) {
         const run = selectedIsland ?? (selectedItem ? itemRun(design, selectedItem) : null);
         if (!run) return;
         e.preventDefault();
@@ -640,6 +773,10 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
         const step = e.shiftKey ? 3 : 0.5;
         const sign = e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 1;
         const horiz = e.key === "ArrowLeft" || e.key === "ArrowRight";
+        if (multi) {
+          apply((d) => moveGroup(d, selectedIds, horiz ? sign * step : 0, horiz ? 0 : sign * step, sign * step));
+          return;
+        }
         // a piece standing on its own floor run moves across the floor, not along a run
         const own = selectedItem && standsAlone(design, selectedItem) ? itemRun(design, selectedItem) : null;
         const run = selectedIsland ?? own;
@@ -651,7 +788,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [apply, design, drawing, previewing, undo, redo, removeSelected, selectedId, selectedIsland, selectedItem, selectedOpening, updateIsland, updateItem, updateOpening]);
+  }, [apply, design, drawing, flash, multi, previewing, undo, redo, removeSelected, selectAll, selectedId, selectedIds, selectedIsland, selectedItem, selectedOpening, setSelectedId, updateIsland, updateItem, updateOpening]);
 
   // ---------- preview ----------
   // The package is drawn at its real paper size, so it is scaled down to fit the window.
@@ -893,10 +1030,12 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
                 design={design}
                 catalog={catalog}
                 selectedId={selectedId}
+                selectedIds={selectedIds}
+                box={box}
                 problemIds={problemIds}
                 selectedRun={activeRunValid}
                 onTargetDown={(e, t) => handleTargetDown("plan", e, t)}
-                onBackgroundDown={() => setSelectedId(null)}
+                onBackgroundDown={handleBackgroundDown}
                 className="stage-svg"
               />
             ) : (
@@ -905,6 +1044,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
                 catalog={catalog}
                 run={viewValid}
                 selectedId={selectedId}
+                selectedIds={selectedIds}
                 problemIds={problemIds}
                 onTargetDown={(e, t) => handleTargetDown("elev", e, t)}
                 onBackgroundDown={() => setSelectedId(null)}
@@ -928,7 +1068,8 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
             ) : (
               <span className="muted">
                 Drag pieces to move them. Drag one a foot off its wall to stand it anywhere on the floor, then turn it with the grip behind it or press R. Arrow keys nudge 1/2&quot;
-                (Shift for 3&quot;). Delete removes the selected piece.
+                (Shift for 3&quot;). Delete removes the selection. Shift-click or drag a box over the floor to select several and move them together. Ctrl/Cmd+C copies,
+                Ctrl/Cmd+V pastes, Ctrl/Cmd+D duplicates.
               </span>
             )}
           </div>
@@ -936,6 +1077,11 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
 
         {/* ---------- inspector ---------- */}
         <aside className="panel panel-right">
+          {multi && (
+            <p className="muted" style={{ margin: "0 0 12px" }}>
+              {selectedIds.size} selected. Drag any of them or use the arrow keys to move them together. Delete removes them all; Ctrl/Cmd+C copies them. The panel below shows one of them.
+            </p>
+          )}
           {selectedItem ? (
             <ItemInspector
               key={selectedItem.id}
@@ -945,7 +1091,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
               runs={runs}
               update={(patch) => updateItem(selectedItem.id, patch)}
               swap={(p) => swapProduct(selectedItem, p)}
-              remove={removeSelected}
+              remove={removeShown}
               lift={() => liftOntoFloor(selectedItem)}
               turn={(angle) => {
                 const run = itemRun(design, selectedItem);
@@ -963,14 +1109,14 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
               }}
             />
           ) : selectedOpening ? (
-            <OpeningInspector key={selectedOpening.id} op={selectedOpening} design={design} update={(patch) => updateOpening(selectedOpening.id, patch)} remove={removeSelected} />
+            <OpeningInspector key={selectedOpening.id} op={selectedOpening} design={design} update={(patch) => updateOpening(selectedOpening.id, patch)} remove={removeShown} />
           ) : selectedIsland ? (
             <IslandInspector
               key={selectedIsland.id}
               island={selectedIsland}
               update={(patch) => updateIsland(selectedIsland.id, patch)}
               turn={(angle) => apply((d) => turnRun(d, selectedIsland.id, angle))}
-              remove={removeSelected}
+              remove={removeShown}
             />
           ) : (
             <DesignInspector design={design} catalog={activeCatalog} cabinetLines={cabinetLines} lineId={designLineId} apply={apply} onLine={switchLine} />

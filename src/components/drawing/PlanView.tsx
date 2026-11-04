@@ -59,7 +59,8 @@ function TurnHandle({ design, run, fs, onDown, live }: { design: DesignData; run
   );
 }
 
-export function PlanView({ design, catalog, selectedId, problemIds, onTargetDown, onBackgroundDown, className, selectedRun }: ViewProps & { selectedRun?: string | null }) {
+export function PlanView({ design, catalog, selectedId, selectedIds, problemIds, onTargetDown, onBackgroundDown, className, selectedRun, box }: ViewProps & { selectedRun?: string | null; box?: { x0: number; y0: number; x1: number; y1: number } | null }) {
+  const isSelected = (id: string) => (selectedIds ? selectedIds.has(id) : selectedId === id);
   const t = design.room.wallThickness;
   const shape = roomShape(design.room);
   const B = shape.bounds;
@@ -78,14 +79,14 @@ export function PlanView({ design, catalog, selectedId, problemIds, onTargetDown
 
   // the selected island, or the floor run the selected piece stands on, gets a turn handle
   const selectedItemRun = design.items.find((i) => i.id === selectedId)?.run;
-  const turnRun = onTargetDown ? (design.islands.find((i) => i.id === selectedId || i.id === selectedItemRun) ?? null) : null;
+  const turnRun = onTargetDown && (selectedIds?.size ?? 1) <= 1 ? (design.islands.find((i) => i.id === selectedId || i.id === selectedItemRun) ?? null) : null;
 
   const drawItem = (it: PlacedItem, isUpper: boolean) => {
     const frame = frames.get(it.run);
     if (!frame) return null;
     const quad = itemQuad(it, frame);
     const paint = finishPaint(catalog, design, it);
-    const selected = selectedId === it.id;
+    const selected = isSelected(it.id);
     const problem = problemIds?.has(it.id);
     const f0 = pointOn(frame, it.offset, it.depth);
     const f1 = pointOn(frame, it.offset + it.width, it.depth);
@@ -129,7 +130,7 @@ export function PlanView({ design, catalog, selectedId, problemIds, onTargetDown
       viewBox={`${B.x0 - M} ${B.y0 - M} ${B.x1 - B.x0 + 2 * M} ${B.y1 - B.y0 + 2 * M}`}
       xmlns="http://www.w3.org/2000/svg"
       fontFamily="'Source Sans 3', Helvetica, Arial, sans-serif"
-      onPointerDown={() => onBackgroundDown?.()}
+      onPointerDown={(e) => onBackgroundDown?.(e)}
       style={{ touchAction: "none", userSelect: "none" }}
     >
       <PaintDefs catalog={catalog} />
@@ -160,7 +161,7 @@ export function PlanView({ design, catalog, selectedId, problemIds, onTargetDown
       {design.openings.map((op) => {
         const frame = frames.get(op.wall);
         if (!frame) return null;
-        const selected = selectedId === op.id;
+        const selected = isSelected(op.id);
         const problem = problemIds?.has(op.id);
         const hit = pointsAttr(runQuad(frame, op.offset, op.offset + op.width, -t, Math.min(op.width, 12)));
         return (
@@ -181,7 +182,7 @@ export function PlanView({ design, catalog, selectedId, problemIds, onTargetDown
         const r = islandRect(design, isl);
         const frame = islandFrame(design, isl);
         const back = pointOn(frame, frame.length / 2, -fs * 0.9);
-        const selected = selectedId === isl.id;
+        const selected = isSelected(isl.id);
         return (
           <g key={isl.id} onPointerDown={down({ kind: "island", id: isl.id })} style={{ cursor: onTargetDown ? "move" : undefined }}>
             <rect x={r.x0 - 1.5} y={r.y0 - 1.5} width={r.x1 - r.x0 + 3} height={r.y1 - r.y0 + 3} fill="#F4F3EF" stroke={selected || selectedRun === isl.id ? SELECT : "#8A8D90"} strokeWidth={selected ? 1.1 : 0.4} strokeDasharray="2 1.2" />
@@ -214,6 +215,20 @@ export function PlanView({ design, catalog, selectedId, problemIds, onTargetDown
           </g>
         );
       })}
+      {box && (
+        <rect
+          x={Math.min(box.x0, box.x1)}
+          y={Math.min(box.y0, box.y1)}
+          width={Math.abs(box.x1 - box.x0)}
+          height={Math.abs(box.y1 - box.y0)}
+          fill={SELECT}
+          fillOpacity={0.08}
+          stroke={SELECT}
+          strokeWidth={0.6}
+          strokeDasharray="2 1.2"
+          style={{ pointerEvents: "none" }}
+        />
+      )}
     </svg>
   );
 }

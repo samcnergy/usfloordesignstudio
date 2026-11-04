@@ -19,9 +19,11 @@ export interface ViewProps {
   design: DesignData;
   catalog: Catalog;
   selectedId?: string | null;
+  /** Everything selected, when several pieces are; otherwise just selectedId. */
+  selectedIds?: Set<string>;
   problemIds?: Set<string>;
   onTargetDown?: (e: ReactPointerEvent<SVGElement>, target: DrawTarget) => void;
-  onBackgroundDown?: () => void;
+  onBackgroundDown?: (e: ReactPointerEvent<SVGSVGElement>) => void;
   className?: string;
 }
 
@@ -115,7 +117,7 @@ function Faucet({ cx, Y }: { cx: number; Y: (z: number) => number }) {
   );
 }
 
-export function ElevationView({ design, catalog, run, selectedId, problemIds, onTargetDown, onBackgroundDown, className }: ViewProps & { run: string }) {
+export function ElevationView({ design, catalog, run, selectedId, selectedIds, problemIds, onTargetDown, onBackgroundDown, className }: ViewProps & { run: string }) {
   const frame = runFrame(design, run);
   if (!frame) return null;
   const L = frame.length;
@@ -179,7 +181,7 @@ export function ElevationView({ design, catalog, run, selectedId, problemIds, on
 
   const drawItem = (it: PlacedItem) => {
     const paint = finishPaint(catalog, design, it);
-    const selected = selectedId === it.id;
+    const selected = selectedIds ? selectedIds.has(it.id) : selectedId === it.id;
     const problem = problemIds?.has(it.id);
     return (
       <g key={it.id} onPointerDown={down({ kind: "item", id: it.id })} style={{ cursor: onTargetDown ? "grab" : undefined }}>
@@ -206,7 +208,7 @@ export function ElevationView({ design, catalog, run, selectedId, problemIds, on
       viewBox={`${-ML} ${-MT} ${L + ML + MR} ${H + MT + MB}`}
       xmlns="http://www.w3.org/2000/svg"
       fontFamily="'Source Sans 3', Helvetica, Arial, sans-serif"
-      onPointerDown={() => onBackgroundDown?.()}
+      onPointerDown={(e) => onBackgroundDown?.(e)}
       style={{ touchAction: "none", userSelect: "none" }}
     >
       <PaintDefs catalog={catalog} />
@@ -215,14 +217,14 @@ export function ElevationView({ design, catalog, run, selectedId, problemIds, on
       {openings.map((op) => (
         <g key={op.id} onPointerDown={down({ kind: "opening", id: op.id })} style={{ cursor: onTargetDown ? "grab" : undefined }}>
           <OpeningFront op={op} Y={Y} />
-          {(selectedId === op.id || problemIds?.has(op.id)) && (
+          {((selectedIds ? selectedIds.has(op.id) : selectedId === op.id) || problemIds?.has(op.id)) && (
             <rect
               x={op.offset - 0.5}
               y={Y(op.type === "window" ? op.sill + op.height : op.height) - 0.5}
               width={op.width + 1}
               height={op.height + 1}
               fill="none"
-              stroke={selectedId === op.id ? SELECT : PROBLEM}
+              stroke={(selectedIds ? selectedIds.has(op.id) : selectedId === op.id) ? SELECT : PROBLEM}
               strokeWidth={0.9}
             />
           )}
