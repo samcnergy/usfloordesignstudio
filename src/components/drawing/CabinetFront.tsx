@@ -431,7 +431,8 @@ export function HoodShape({ x, w, z0, h, Y }: { x: number; w: number; z0: number
   );
 }
 
-export function CabinetFront({ item, paint, Y }: { item: PlacedItem; paint: Paint; Y: (z: number) => number }) {
+/** swing: the dashed door-swing marks of a front view; the 3D view leaves them off. */
+export function CabinetFront({ item, paint, Y, swing = true }: { item: PlacedItem; paint: Paint; Y: (z: number) => number; swing?: boolean }) {
   const ox = item.offset;
   const z0 = item.mountHeight;
   const ZY = (z: number) => Y(z0 + z); // local z to svg y
@@ -468,7 +469,7 @@ export function CabinetFront({ item, paint, Y }: { item: PlacedItem; paint: Pain
             strokeWidth={0.3}
           />
           {item.category !== "appliance" && f.handle !== "none" && <PanelDetail face={f} Y={ZY} ox={ox} ink={paint.ink} doorStyle={paint.doorStyle} />}
-          <SwingMark face={f} Y={ZY} ox={ox} ink={paint.ink} />
+          {swing && <SwingMark face={f} Y={ZY} ox={ox} ink={paint.ink} />}
           <HandleMark face={f} Y={ZY} ox={ox} ink={paint.ink} />
         </g>
       ))}

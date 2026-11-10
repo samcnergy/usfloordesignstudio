@@ -320,3 +320,11 @@ textarea.input { resize: vertical; }
 .draw-field .input { width: 96px; }
 .draw-svg { flex: 1; min-height: 0; width: 100%; display: block; background: var(--surface); border: 1px solid var(--line); }
 .draw-help { margin: 0; }
+
+/* The 3D view as a line drawing (src/components/drawing/View3D.tsx): every
+   face white, every line dark, like a 2020 Design drawing. */
+.lineart [fill]:not([fill="none"]):not(text) { fill: #FFFFFF !important; fill-opacity: 1 !important; }
+.lineart [stroke]:not([stroke="none"]) { stroke: #1A1D1F !important; stroke-opacity: 1 !important; }
+.lineart rect:not([stroke]), .lineart circle:not([stroke]), .lineart path:not([stroke]), .lineart polygon:not([stroke]) { stroke: #1A1D1F; stroke-width: 0.2; }
+.view3d-controls { display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem; align-items: center; padding: 0.5rem 0.75rem; }
+.view3d-controls label { display: flex; align-items: center; gap: 0.5rem; }

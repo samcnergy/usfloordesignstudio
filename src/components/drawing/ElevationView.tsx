@@ -27,11 +27,11 @@ export interface ViewProps {
   className?: string;
 }
 
-const COUNTER_STYLES = new Set(["base", "drawer_base", "sink_base", "blind_corner_base", "lazy_susan", "open_shelf", "vanity_combo", "dishwasher"]);
-const BASE_TOP = 34.5;
+export const COUNTER_STYLES = new Set(["base", "drawer_base", "sink_base", "blind_corner_base", "lazy_susan", "open_shelf", "vanity_combo", "dishwasher"]);
+export const BASE_TOP = 34.5;
 
 /** Pieces side by side become one span, so a countertop or a crown runs across them all. */
-function mergeSpans(items: PlacedItem[]): [number, number][] {
+export function mergeSpans(items: PlacedItem[]): [number, number][] {
   const spans = items.map((i) => [i.offset, i.offset + i.width] as [number, number]).sort((a, b) => a[0] - b[0]);
   const merged: [number, number][] = [];
   for (const s of spans) {
@@ -42,11 +42,11 @@ function mergeSpans(items: PlacedItem[]): [number, number][] {
   return merged;
 }
 
-function counterRuns(items: PlacedItem[]): [number, number][] {
+export function counterRuns(items: PlacedItem[]): [number, number][] {
   return mergeSpans(items.filter((i) => COUNTER_STYLES.has(i.style) && i.mountHeight === 0 && Math.abs(i.height - BASE_TOP) < 0.01));
 }
 
-function OpeningFront({ op, Y }: { op: Opening; Y: (z: number) => number }) {
+export function OpeningFront({ op, Y }: { op: Opening; Y: (z: number) => number }) {
   const x = op.offset;
   const w = op.width;
   const casing = 2.5;

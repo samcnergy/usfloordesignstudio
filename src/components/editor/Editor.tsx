@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { Brand } from "@/components/Brand";
 import { ElevationView, type DrawTarget } from "@/components/drawing/ElevationView";
 import { PlanView } from "@/components/drawing/PlanView";
+import { View3D, DEFAULT_CAMERA, type Camera3D } from "@/components/drawing/View3D";
 import { PrintSheet } from "@/components/print/PrintSheet";
 import {
   angleGap,
@@ -156,7 +157,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
   // keep the active run valid if an island is removed
   const firstWall = design.room.walls[0].id;
   const activeRunValid = isWall(design.room, activeRun) || design.islands.some((i) => i.id === activeRun) ? activeRun : firstWall;
-  const viewValid = view === "plan" || isWall(design.room, view) || design.islands.some((i) => i.id === view) ? view : "plan";
+  const viewValid = view === "plan" || view === "3d" || isWall(design.room, view) || design.islands.some((i) => i.id === view) ? view : "plan";
 
   // ---------- saving ----------
   const [saved, setSaved] = useState<{ design: DesignData; meta: Meta }>({ design: initial.data, meta });
@@ -1004,6 +1005,9 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
                 <button className={`chip ${viewValid === "plan" ? "chip-on" : ""}`} onClick={() => setView("plan")}>
                   Top view
                 </button>
+                <button className={`chip ${viewValid === "3d" ? "chip-on" : ""}`} onClick={() => setView("3d")}>
+                  3D view
+                </button>
                 {runs.map((r) => (
                   <button
                     key={r.id}
@@ -1025,6 +1029,8 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
           <div className="canvas-stage">
             {drawing ? (
               <DrawRoom room={design.room} minWalls={minWalls} onFinish={finishDrawing} onCancel={() => setDrawing(false)} flash={flash} />
+            ) : viewValid === "3d" ? (
+              <View3DPanel design={design} catalog={catalog} apply={apply} />
             ) : viewValid === "plan" ? (
               <PlanView
                 design={design}
@@ -1786,4 +1792,48 @@ function insideQuad(p: Vec, q: Vec[]): boolean {
     else if (s !== sign) return false;
   }
   return true;
+}
+
+/**
+ * The 3D view and its controls. Turning and tilting are live; the angle is
+ * saved with the design when the slider is let go, so the printed package
+ * shows the same view.
+ */
+function View3DPanel({ design, catalog, apply }: { design: DesignData; catalog: Catalog; apply: (fn: (d: DesignData) => DesignData) => void }) {
+  const saved: Camera3D = { ...DEFAULT_CAMERA, ...(design.view3d ?? {}) };
+  const [live, setLive] = useState<Camera3D | null>(null);
+  const cam = live ?? saved;
+  const save = (next: Camera3D) => {
+    setLive(null);
+    apply((d) => ({ ...d, view3d: { turn: next.turn, tilt: next.tilt, look: next.look } }));
+  };
+  const slider = (key: "turn" | "tilt", label: string, min: number, max: number) => (
+    <label>
+      <span className="field-label">{label}</span>
+      <input
+        type="range" min={min} max={max} step={1} value={cam[key]}
+        onChange={(e) => setLive({ ...cam, [key]: Number(e.target.value) })}
+        onPointerUp={() => save(cam)} onKeyUp={() => save(cam)} onBlur={() => live && save(cam)}
+      />
+      <span className="tabular">{cam[key]}°</span>
+    </label>
+  );
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", width: "100%" }}>
+      <div className="view3d-controls">
+        {slider("turn", "Turn", -180, 180)}
+        {slider("tilt", "Tilt", 5, 75)}
+        <span>
+          <button className={`chip ${cam.look === "line" ? "chip-on" : ""}`} onClick={() => save({ ...cam, look: "line" })}>Line drawing</button>{" "}
+          <button className={`chip ${cam.look === "color" ? "chip-on" : ""}`} onClick={() => save({ ...cam, look: "color" })}>Color</button>
+        </span>
+        <span>
+          {[["Front left", 35], ["Front", 0], ["Front right", -35]].map(([l, t]) => (
+            <button key={l} className="chip" onClick={() => save({ ...cam, turn: t as number })}>{l}</button>
+          ))}
+        </span>
+      </div>
+      <View3D design={design} catalog={catalog} cam={cam} className="stage-svg" />
+    </div>
+  );
 }

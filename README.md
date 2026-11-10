@@ -1,6 +1,6 @@
 # US Floor Design Studio
 
-Kitchen design tool for US Floor Design Center. Designers lay out a room, add doors and windows, place cabinets and appliances in our own sizes and colors, and print a design package with a top view, a front view of every wall and island, and a cabinet list.
+Kitchen design tool for US Floor Design Center. Designers lay out a room, add doors and windows, place cabinets and appliances in our own sizes and colors, and print a design package with a top view, a 3D view, a front view of every wall and island, and a cabinet list.
 
 Separate from usfloor-platform. Own Supabase project (`mvwvgzxbgdndfsmhmbfu`, named usfloordesignstudio) and own Render service.
 
@@ -23,6 +23,7 @@ Next.js 16 (App Router), React 19, TypeScript strict, Supabase (Postgres, Auth, 
 | `src/lib/import/` | Product import: reads CSV, Excel or pasted tables and fills sizes, doors, drawers and placement from descriptions and SKUs. |
 | `src/lib/data.ts` | Every database read and write. |
 | `src/components/drawing/` | Top view (`PlanView`), front views (`ElevationView`, `CabinetFront`), dimension strings, fills. |
+| `src/components/drawing/View3D.tsx` | 3D view: the kitchen as a line drawing (or in color), turned and tilted; each cabinet front is the front-view drawing laid on its face. `scripts/render-3d-sample.tsx` draws a sample kitchen to an SVG. |
 | `src/components/editor/Editor.tsx` | The designer screen: panels, dragging, undo, keyboard, autosave. |
 | `src/components/editor/RoomPanel.tsx` | Room tab: ceiling, wall thickness, and the walls with their lengths, corners and open sides. |
 | `src/components/editor/DrawRoom.tsx` | Draw walls: click each corner in the top view, or type a length (and corner angle) and press Enter. |

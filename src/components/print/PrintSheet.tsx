@@ -6,6 +6,7 @@
 import { Brand } from "@/components/Brand";
 import { ElevationView } from "@/components/drawing/ElevationView";
 import { PlanView } from "@/components/drawing/PlanView";
+import { View3D, DEFAULT_CAMERA } from "@/components/drawing/View3D";
 import { roomShape } from "@/lib/geometry";
 import type { Catalog, DesignRecord } from "@/lib/types";
 import { buildSchedule } from "@/lib/schedule";
@@ -33,7 +34,10 @@ export function PrintSheet({ record, catalog }: { record: DesignRecord; catalog:
   ];
   const elevationPages = chunk(runs, 4);
   const photoPages = chunk(design.photos, 6);
-  const totalPages = 1 + elevationPages.length + photoPages.length;
+  // The 3D view gets a page of its own once there is something to see.
+  const has3d = design.items.length > 0;
+  const totalPages = 1 + (has3d ? 1 : 0) + elevationPages.length + photoPages.length;
+  const after3d = has3d ? 1 : 0;
   const date = new Date(record.updated_at || Date.now()).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
 
   const header = (title: string) => (
@@ -168,6 +172,16 @@ export function PrintSheet({ record, catalog }: { record: DesignRecord; catalog:
         {footer(1)}
       </section>
 
+      {has3d && (
+        <section className="sheet-page">
+          {header("Kitchen Design: 3D View")}
+          <div className="sheet-body">
+            <View3D design={design} catalog={catalog} cam={{ ...DEFAULT_CAMERA, ...(design.view3d ?? {}) }} className="sheet-svg" />
+          </div>
+          {footer(2)}
+        </section>
+      )}
+
       {elevationPages.map((group, pi) => (
         <section className="sheet-page" key={`e-${pi}`}>
           {header("Kitchen Design: Front Views")}
@@ -178,7 +192,7 @@ export function PrintSheet({ record, catalog }: { record: DesignRecord; catalog:
               </div>
             ))}
           </div>
-          {footer(2 + pi)}
+          {footer(2 + after3d + pi)}
         </section>
       ))}
 
@@ -194,7 +208,7 @@ export function PrintSheet({ record, catalog }: { record: DesignRecord; catalog:
               </figure>
             ))}
           </div>
-          {footer(2 + elevationPages.length + pi)}
+          {footer(2 + after3d + elevationPages.length + pi)}
         </section>
       ))}
     </div>

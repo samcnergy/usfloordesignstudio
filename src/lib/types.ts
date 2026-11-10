@@ -217,6 +217,8 @@ export interface DesignData {
   countertopId: string | null;
   photos: DesignPhoto[];
   extras: ExtraItem[];
+  // The 3D view: how it is turned and tilted, and line drawing or color. Printed as set.
+  view3d?: { turn: number; tilt: number; look: "line" | "color" };
 }
 
 export interface DesignRecord {
