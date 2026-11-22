@@ -102,3 +102,45 @@ export function DimAligned({ p0, p1, o, d, fs, label }: { p0: Vec; p1: Vec; o: V
     </g>
   );
 }
+
+/**
+ * A dimension string of several stops along a line (K&B drawing standards: one continuous run of
+ * dimensions). The stops are distances along `u` from `origin`; the string sits `d` out along `o`.
+ * Witness lines run from `from` (how far out they start) to just past the string. With `centers`,
+ * the stops that are centerlines get a long-dash short-dash witness line from `centers[i]` and a
+ * centerline symbol above it, except at the start and end of the string.
+ */
+export function DimChain({ origin, u, o, d, stops, fs, from = 0, centers }: {
+  origin: Vec; u: Vec; o: Vec; d: number; stops: number[]; fs: number; from?: number;
+  centers?: Map<number, Vec>;
+}) {
+  const at = (s: number, k: number) => ({ x: origin.x + u.x * s + o.x * k, y: origin.y + u.y * s + o.y * k });
+  const sorted = [...new Set(stops.map((s) => Math.round(s * 1000) / 1000))].sort((a, b) => a - b);
+  if (sorted.length < 2) return null;
+  const gap = fs * 0.12; // a small gap between the object and the witness line
+  return (
+    <g>
+      {sorted.map((s, i) => {
+        const c = centers?.get(s);
+        const end = at(s, d + fs * 0.45);
+        if (c) {
+          const sym = at(s, d + fs * 1.05);
+          const inner = i > 0 && i < sorted.length - 1;
+          return (
+            <g key={`w${i}`}>
+              <line x1={c.x} y1={c.y} x2={end.x} y2={end.y} stroke={DIM} strokeWidth={0.18} strokeDasharray={`${fs * 1.2} ${fs * 0.25} ${fs * 0.25} ${fs * 0.25}`} />
+              {inner && (
+                <text x={sym.x} y={sym.y} fontSize={fs * 0.95} textAnchor="middle" dominantBaseline="middle" fill={DIM}>{"℄"}</text>
+              )}
+            </g>
+          );
+        }
+        const start = at(s, from + gap);
+        return <line key={`w${i}`} x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke={DIM} strokeWidth={0.18} strokeOpacity={0.7} />;
+      })}
+      {sorted.slice(1).map((s, i) => (
+        <DimAligned key={`d${i}`} p0={at(sorted[i], 0)} p1={at(s, 0)} o={o} d={d} fs={fs} />
+      ))}
+    </g>
+  );
+}

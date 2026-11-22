@@ -3,6 +3,7 @@
 // Front view of one wall or island: cabinets, appliances, countertop, doors
 // and windows, with width and height dimension strings.
 
+import { BASE_TOP, COUNTER_STYLES } from "@/lib/plan";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { Catalog, DesignData, Opening, PlacedItem } from "@/lib/types";
 import { isWall, itemLabel, runFrame } from "@/lib/geometry";
@@ -32,8 +33,7 @@ export interface ViewProps {
   print?: { scale: number };
 }
 
-export const COUNTER_STYLES = new Set(["base", "drawer_base", "sink_base", "blind_corner_base", "lazy_susan", "open_shelf", "vanity_combo", "dishwasher"]);
-export const BASE_TOP = 34.5;
+export { BASE_TOP, COUNTER_STYLES };
 
 /** Pieces side by side become one span, so a countertop or a crown runs across them all. */
 export function mergeSpans(items: PlacedItem[]): [number, number][] {

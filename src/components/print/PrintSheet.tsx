@@ -17,6 +17,7 @@ import { ElevationView, elevationPaperSize } from "@/components/drawing/Elevatio
 import { PlanView, planBox, type ElevationMark } from "@/components/drawing/PlanView";
 import { View3D, DEFAULT_CAMERA } from "@/components/drawing/View3D";
 import { roomShape } from "@/lib/geometry";
+import { DROP_DOOR } from "@/lib/plan";
 import { buildSchedule, type ScheduleRow } from "@/lib/schedule";
 import {
   FIRM, GENERAL_NOTES, INTERPRETATION, LIABILITY, PAPER, SCALES, copyright, drawingArea, fitScale, initials, roomName, sheetId,
@@ -167,8 +168,10 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
     line || finish ? `Cabinets: ${[maker && maker.name !== "Generic" ? maker.name : null, line?.name, finish?.name].filter(Boolean).join(", ")}.` : null,
     counter ? `Countertop: ${counter.name}, ${fmtIn(counter.thickness ?? 1.5)} thick.` : null,
     (design.crown ?? 0) > 0 ? `Cabinet crown molding on the wall cabinets, ${fmtIn(design.crown)} high. Wall cabinets stop ${fmtIn(design.crown)} below the ceiling.` : "No cabinet crown molding. Wall cabinets run to the ceiling.",
-    "Toe kicks per the cabinet manufacturer.",
-    "Wall cabinets are drawn dashed (above the counter).",
+    "Toe kicks per the cabinet manufacturer, finished to match the cabinets.",
+    "The plan is cut at the ceiling. Base cabinets and anything else under the counter are hidden lines; the countertop, wall and tall cabinets are object lines.",
+    `Appliance doors are shown fully open. Sizes are typical (dishwasher door ${fmtIn(DROP_DOOR.dishwasher)}, range door ${fmtIn(DROP_DOOR.range)}); confirm with the manufacturer's installation guide.`,
+    "Dimensions are from the finished wall surface. Doors and windows are dimensioned to the outside of the casing. Fixtures and appliances are located by centerlines.",
     ...(record.notes ? [record.notes] : []),
   ].filter((n): n is string => !!n);
 
@@ -192,6 +195,8 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
         </div>
         <aside className="ds-plan-side" style={{ width: `${notesWidth}in` }}>
           <div className="ds-north"><NorthArrow angle={northAngle(design)} /></div>
+          <h4>Legend</h4>
+          <PlanLegend />
           <h4>Plan notes</h4>
           <ol>{planNotes.map((n, i) => <li key={i}>{n}</li>)}</ol>
           <p className="ds-small">Cabinet codes are the manufacturer&apos;s order codes. See the cabinet schedule, {sheetId(1, 2)}.</p>
@@ -303,30 +308,55 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
 
 }
 
+/** The plan legend: the line types and symbols used on the plan (K&B drawing standards: a legend on every plan). */
+function PlanLegend() {
+  const row = (key: string, sample: React.ReactNode, text: string) => (
+    <div className="ds-legend-row" key={key}>
+      <svg width="0.55in" height="0.2in" viewBox="0 0 30 11" aria-hidden="true">{sample}</svg>
+      <span>{text}</span>
+    </div>
+  );
+  return (
+    <div className="ds-legend">
+      {row("wall", <rect x={1} y={3} width={28} height={5} fill="#33363A" />, "Wall")}
+      {row("object", <line x1={1} x2={29} y1={5.5} y2={5.5} stroke="#000" strokeWidth={0.9} />, "Object line: countertop, wall and tall cabinets, appliances in the open")}
+      {row("hidden", <line x1={1} x2={29} y1={5.5} y2={5.5} stroke="#000" strokeWidth={0.7} strokeDasharray="3 2" />, "Hidden line: cabinets and appliances under the counter, appliance doors open")}
+      {row("cl", <><line x1={1} x2={29} y1={6.5} y2={6.5} stroke="#000" strokeWidth={0.5} strokeDasharray="7 1.5 1.5 1.5" /><text x={15} y={4} fontSize={5} textAnchor="middle">{"\u2104"}</text></>, "Centerline of a fixture or appliance")}
+      {row("dim", <><line x1={3} x2={27} y1={5.5} y2={5.5} stroke="#000" strokeWidth={0.5} /><line x1={1.5} x2={4.5} y1={7} y2={4} stroke="#000" strokeWidth={0.7} /><line x1={25.5} x2={28.5} y1={7} y2={4} stroke="#000" strokeWidth={0.7} /></>, "Dimension, in inches")}
+      {row("door", <><line x1={4} x2={4} y1={1} y2={10} stroke="#000" strokeWidth={0.8} /><path d="M 4 1 A 9 9 0 0 1 13 10" fill="none" stroke="#000" strokeWidth={0.5} strokeDasharray="1.5 1" /></>, "Door and its swing")}
+      {row("mark", <><polygon points="15,0.5 18,4 12,4" fill="#000" /><circle cx={15} cy={7} r={3.6} fill="#FFF" stroke="#000" strokeWidth={0.6} /><text x={15} y={8.6} fontSize={4.2} textAnchor="middle" fontWeight={700}>1</text></>, "Elevation marker: the arrow points at the wall drawn")}
+      {row("code", <text x={15} y={7.5} fontSize={6} textAnchor="middle" fontWeight={700}>B24</text>, "Cabinet code, listed in the cabinet schedule")}
+    </div>
+  );
+}
+
 function ScheduleTable({ rows, empty }: { rows: ScheduleRow[]; empty: boolean }) {
   return (
     <div className="ds-schedule">
       <h3>Cabinet schedule</h3>
       <table className="ds-table">
         <thead>
-          <tr><th>Qty</th><th>Code</th><th>Description</th><th>Size (W x H x D)</th><th>Line</th><th>Finish</th><th>Location</th></tr>
+          <tr><th>No.</th><th>Qty</th><th>Code</th><th>Description</th><th>Size (W x H x D)</th><th>Line</th><th>Finish</th><th>Room</th><th>Location</th><th>Changes</th></tr>
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={`${r.label}-${r.line}-${r.finish}-${r.size}-${r.locations}`}>
+            <tr key={r.no}>
+              <td className="tabular">{r.no}</td>
               <td className="tabular">{r.qty}</td>
               <td className="tabular"><b>{r.label}</b></td>
               <td>{r.description}</td>
               <td className="tabular">{r.size}</td>
               <td>{r.line}</td>
               <td>{r.finish}</td>
+              <td>{r.room}</td>
               <td>{r.locations}</td>
+              <td>{r.notes}</td>
             </tr>
           ))}
-          {empty && <tr><td colSpan={7}>No cabinets placed yet.</td></tr>}
+          {empty && <tr><td colSpan={10}>No cabinets placed yet.</td></tr>}
         </tbody>
       </table>
-      <p className="ds-small">Cabinet codes are the manufacturer&apos;s order codes. Moldings, toe kicks and other order items are listed last.</p>
+      <p className="ds-small">Cabinet codes are the manufacturer&apos;s order codes. Numbered from the top-left corner of the plan, clockwise: base cabinets, then wall, tall, fillers and panels, and appliances. Moldings, toe kicks and other order items are listed last.</p>
     </div>
   );
 }

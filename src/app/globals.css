@@ -336,6 +336,9 @@ textarea.input { resize: vertical; }
 .ds-sheet:last-child { break-after: auto; page-break-after: auto; }
 .ds-border { box-sizing: border-box; height: 100%; display: flex; border: 2.5pt solid #000; }
 .ds-draw { flex: 1; min-width: 0; padding: 0.15in; overflow: hidden; display: flex; flex-direction: column; }
+.ds-legend { display: flex; flex-direction: column; gap: 2px; font-size: 6.5pt; }
+.ds-legend-row { display: flex; align-items: center; gap: 5px; line-height: 1.15; }
+.ds-legend-row svg { flex: none; }
 .ds-small { font-size: 6.5pt; color: #333; margin: 4px 0 0; }
 .ds-disclaimer { font-size: 7pt; font-style: italic; margin: 4px 0 0; }
 .ds-marker { display: flex; align-items: center; gap: 0.12in; margin-top: 0.08in; }

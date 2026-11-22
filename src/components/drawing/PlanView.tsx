@@ -1,13 +1,18 @@
 "use client";
 
 // Top view of the room: walls, doors, windows, islands and every placed piece.
-// Wall-hung pieces are drawn dashed over the floor pieces, the usual plan convention.
+// On screen, wall-hung pieces are drawn dashed over the floor pieces, which is
+// easiest to work with. The printed plan follows the K&B drawing standards
+// (src/lib/plan.ts): cut at the ceiling, base cabinets hidden under an object
+// line countertop, wall and tall cabinets solid, appliance doors open, and
+// three dimension strings with centerlines.
 
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { DesignData, Island, Opening, PlacedItem } from "@/lib/types";
-import { allFrames, islandDepth, islandFrame, islandRect, itemLabel, itemQuad, pointOn, pointsAttr, roomShape, runQuad, type RunFrame } from "@/lib/geometry";
+import { allFrames, islandDepth, islandFrame, islandRect, itemCenter, itemLabel, itemQuad, pointOn, pointsAttr, roomShape, runQuad, type RunFrame, type Vec } from "@/lib/geometry";
 import { fmtFtIn, fmtIn } from "@/lib/units";
-import { DimAligned } from "./dims";
+import { DimAligned, DimChain } from "./dims";
+import { CENTERLINE_STYLES, DROP_DOOR, applianceDoors, centerlines, counterOutlines, openingStops, planLine, planTiers } from "@/lib/plan";
 import type { DrawTarget, ViewProps } from "./ElevationView";
 import { PROBLEM, PaintDefs, SELECT, finishPaint, monoPaint } from "./paint";
 
@@ -63,7 +68,8 @@ function TurnHandle({ design, run, fs, onDown, live }: { design: DesignData; run
 export function planBox(design: DesignData, fs?: number): { x: number; y: number; width: number; height: number; fs: number } {
   const B = roomShape(design.room).bounds;
   const f = fs ?? Math.max(3, Math.min(6, Math.max(B.x1 - B.x0, B.y1 - B.y0) / 38));
-  const M = f * 6;
+  // the printed plan keeps room for three dimension strings and the centerline symbols outside the walls
+  const M = fs === undefined ? f * 6 : (design.room.wallThickness ?? 4.5) + f * (1.4 * planTiers(design) + 1.4);
   return { x: B.x0 - M, y: B.y0 - M, width: B.x1 - B.x0 + 2 * M, height: B.y1 - B.y0 + 2 * M, fs: f };
 }
 
@@ -96,42 +102,56 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
   const selectedItemRun = design.items.find((i) => i.id === selectedId)?.run;
   const turnRun = onTargetDown && (selectedIds?.size ?? 1) <= 1 ? (design.islands.find((i) => i.id === selectedId || i.id === selectedItemRun) ?? null) : null;
 
-  const drawItem = (it: PlacedItem, isUpper: boolean) => {
+  /** One piece: its outline and its code, or (on the printed plan, where codes go on top of everything) just one of them. */
+  const drawItem = (it: PlacedItem, isUpper: boolean, part: "all" | "shape" | "label" = "all") => {
     const frame = frames.get(it.run);
     if (!frame) return null;
     const quad = itemQuad(it, frame);
     const paint = mono ? monoPaint(finishPaint(catalog, design, it)) : finishPaint(catalog, design, it);
+    const hidden = mono && planLine(design, it) === "hidden";
     const selected = isSelected(it.id);
     const problem = problemIds?.has(it.id);
     const f0 = pointOn(frame, it.offset, it.depth);
     const f1 = pointOn(frame, it.offset + it.width, it.depth);
-    const labelPoint = pointOn(frame, it.offset + it.width / 2, isUpper ? Math.min(it.depth * 0.38, 5) : it.depth * 0.66);
+    // on the printed plan, a label under a hood or cabinet moves in front of it
+    const cover = mono && planLine(design, it) === "hidden"
+      ? Math.max(0, ...design.items.filter((o) => o.run === it.run && o.mountHeight > 0 && o.offset < it.offset + it.width - 0.01 && it.offset < o.offset + o.width - 0.01).map((o) => o.depth))
+      : 0;
+    const labelPoint = pointOn(frame, it.offset + it.width / 2, isUpper ? Math.min(it.depth * 0.38, 5) : cover > 0 ? Math.max(cover + (it.depth - cover) / 2, it.depth * 0.66) : it.depth * 0.66);
     const label = itemLabel(it);
     const span = Math.min(it.width, it.depth);
     const lfs = Math.min(fs * 0.85, Math.max(span / Math.max(label.length * 0.62, 1), fs * 0.45));
+    const text = (
+      <text
+        key={`label-${it.id}`}
+        x={labelPoint.x}
+        y={labelPoint.y + lfs * 0.35}
+        fontSize={lfs}
+        textAnchor="middle"
+        fill={mono ? "#1A1D1F" : paint.ink}
+        fontWeight={600}
+        stroke={mono ? "#FFFFFF" : undefined}
+        strokeWidth={mono ? lfs * 0.25 : undefined}
+        paintOrder="stroke"
+        style={{ pointerEvents: "none" }}
+      >
+        {label}
+      </text>
+    );
+    if (part === "label") return text;
     return (
       <g key={it.id} onPointerDown={down({ kind: "item", id: it.id })} style={{ cursor: onTargetDown ? "grab" : undefined }}>
         <polygon
           points={pointsAttr(quad)}
-          fill={paint.fill}
-          fillOpacity={isUpper ? 0.55 : 1}
+          fill={mono ? (hidden ? "none" : "#FFFFFF") : paint.fill}
+          fillOpacity={mono ? 1 : isUpper ? 0.55 : 1}
           stroke={problem ? PROBLEM : "#1A1D1F"}
-          strokeWidth={problem ? 0.7 : 0.35}
-          strokeDasharray={isUpper ? "1.6 1" : undefined}
+          strokeWidth={problem ? 0.7 : mono ? (hidden ? 0.3 : 0.45) : 0.35}
+          strokeDasharray={mono ? (hidden ? `${fs * 0.5} ${fs * 0.3}` : undefined) : isUpper ? "1.6 1" : undefined}
         />
-        {!isUpper && <line x1={f0.x} y1={f0.y} x2={f1.x} y2={f1.y} stroke="#1A1D1F" strokeWidth={0.8} />}
+        {!isUpper && !mono && <line x1={f0.x} y1={f0.y} x2={f1.x} y2={f1.y} stroke="#1A1D1F" strokeWidth={0.8} />}
         {selected && <polygon points={pointsAttr(runQuad(frame, it.offset - 0.6, it.offset + it.width + 0.6, -0.6, it.depth + 0.6))} fill="none" stroke={SELECT} strokeWidth={1.1} />}
-        <text
-          x={labelPoint.x}
-          y={labelPoint.y + lfs * 0.35}
-          fontSize={lfs}
-          textAnchor="middle"
-          fill={paint.ink}
-          fontWeight={600}
-          style={{ pointerEvents: "none" }}
-        >
-          {label}
-        </text>
+        {part === "all" ? text : null}
       </g>
     );
   };
@@ -143,21 +163,50 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
    * wall; a marker that would touch one placed before it slides along its wall until it is clear.
    */
   const markerCenters = new Map<string, { x: number; y: number }>();
+  // the island location strings (drawn below), which the markers keep clear of
+  const minX = Math.min(...shape.inner.map((p) => p.x));
+  const minY = Math.min(...shape.inner.map((p) => p.y));
+  const dimIslands = print ? design.islands.filter((isl) => design.items.some((i) => i.run === isl.id) && Math.abs(((isl.rotation % 90) + 90) % 90) < 0.01) : [];
+  const islandDims: [Vec, Vec][] = dimIslands.flatMap((isl) => {
+    const r = islandRect(design, isl);
+    const y = r.y0 - fs * 1.6;
+    const x = r.x0 - fs * 1.6;
+    return [[{ x: minX, y }, { x: r.x1, y }], [{ x, y: minY }, { x, y: r.y0 }]] as [Vec, Vec][];
+  });
+  const segDist = (p: Vec, [a, b]: [Vec, Vec]) => {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const k = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / Math.max(1e-9, dx * dx + dy * dy)));
+    return Math.hypot(p.x - (a.x + dx * k), p.y - (a.y + dy * k));
+  };
   if (print) {
     const r = print.scale * 0.3125;
     for (const m of marks ?? []) {
       const w = shape.walls.find((x) => x.id === m.wallId);
       if (!w) continue;
-      const depth = Math.max(0, ...design.items.filter((i) => i.run === w.id && i.mountHeight === 0).map((i) => i.depth));
-      const at = (s: number) => pointOn(w, s, depth + r * 1.6);
-      const clear = (p: { x: number; y: number }) => [...markerCenters.values()].every((c) => Math.hypot(c.x - p.x, c.y - p.y) >= r * 2.4);
-      let best = at(w.length / 2);
-      for (let step = 1; !clear(best) && step < 40; step++) {
-        const shift = Math.ceil(step / 2) * r * 0.5 * (step % 2 ? 1 : -1);
-        const s0 = w.length / 2 + shift;
-        if (s0 > r && s0 < w.length - r) best = at(s0);
+      // how far into the room things reach at a spot: cabinets, open appliance doors, a door swing
+      const reachAt = (s: number) => {
+        let d = 0;
+        for (const i of design.items) {
+          if (i.run !== w.id || i.mountHeight > 0 || i.offset > s + r * 1.2 || i.offset + i.width < s - r * 1.2) continue;
+          d = Math.max(d, i.depth + (i.style === "dishwasher" ? DROP_DOOR.dishwasher : i.style === "range" ? DROP_DOOR.range : i.style === "refrigerator" ? (i.width >= 33 ? i.width / 2 : i.width) : 0));
+        }
+        for (const op of design.openings) {
+          if (op.wall === w.id && op.type === "door" && op.offset < s + r * 1.2 && op.offset + op.width > s - r * 1.2) d = Math.max(d, op.width);
+        }
+        return d;
+      };
+      const at = (s: number) => pointOn(w, s, reachAt(s) + r * 1.6);
+      const clear = (p: { x: number; y: number }) =>
+        [...markerCenters.values()].every((c) => Math.hypot(c.x - p.x, c.y - p.y) >= r * 2.4) && islandDims.every((seg) => segDist(p, seg) >= r * 1.4);
+      let best: { x: number; y: number } | null = null;
+      let bestScore = Infinity;
+      for (let s0 = r * 1.5; s0 <= w.length - r * 1.5; s0 += r * 0.5) {
+        const p = at(s0);
+        if (!clear(p)) continue;
+        const score = reachAt(s0) + Math.abs(s0 - w.length / 2) * 0.15;
+        if (score < bestScore) { best = p; bestScore = score; }
       }
-      markerCenters.set(w.id, best);
+      markerCenters.set(w.id, best ?? at(w.length / 2));
     }
   }
   const markerCenter = (wallId: string) => markerCenters.get(wallId) ?? null;
@@ -217,8 +266,8 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
 
       {design.islands.map((isl) => {
         const on = design.items.filter((i) => i.run === isl.id);
-        // a single piece standing on its own floor run needs no box around it
-        if (isl.auto && on.length <= 1) return null;
+        // a single piece standing on its own floor run needs no box around it; the printed plan shows only the cabinets and top
+        if (print || (isl.auto && on.length <= 1)) return null;
         const r = islandRect(design, isl);
         const frame = islandFrame(design, isl);
         const back = pointOn(frame, frame.length / 2, -fs * 0.9);
@@ -235,8 +284,36 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
         );
       })}
 
-      {lower.map((it) => drawItem(it, false))}
-      {upper.map((it) => drawItem(it, true))}
+      {mono ? (
+        <>
+          {/* cut at the ceiling: what is under the counter first, then the countertop, then what is seen from above */}
+          {design.items.filter((it) => planLine(design, it) === "hidden").map((it) => drawItem(it, it.mountHeight > 0, "shape"))}
+          {counterOutlines(design, frames).map((q, i) => (
+            <polygon key={`ctr-${i}`} points={pointsAttr(q)} fill="none" stroke="#1A1D1F" strokeWidth={0.45} />
+          ))}
+          {[...lower, ...upper].filter((it) => planLine(design, it) === "object").map((it) => drawItem(it, it.mountHeight > 0, "shape"))}
+          {design.items.map((it) => {
+            const frame = frames.get(it.run);
+            if (!frame) return null;
+            const dash = `${fs * 0.5} ${fs * 0.3}`;
+            return (
+              <g key={`door-${it.id}`}>
+                {applianceDoors(it, frame).map((sh, i) =>
+                  sh.kind === "line" ? <line key={i} x1={sh.a.x} y1={sh.a.y} x2={sh.b.x} y2={sh.b.y} stroke="#1A1D1F" strokeWidth={0.3} strokeDasharray={dash} />
+                  : sh.kind === "arc" ? <path key={i} d={`M ${sh.from.x} ${sh.from.y} A ${sh.r} ${sh.r} 0 0 ${sh.sweep} ${sh.to.x} ${sh.to.y}`} fill="none" stroke="#1A1D1F" strokeWidth={0.25} strokeDasharray={dash} />
+                  : <polygon key={i} points={pointsAttr(sh.pts)} fill="none" stroke="#1A1D1F" strokeWidth={0.3} strokeDasharray={dash} />,
+                )}
+              </g>
+            );
+          })}
+          {design.items.map((it) => drawItem(it, it.mountHeight > 0, "label"))}
+        </>
+      ) : (
+        <>
+          {lower.map((it) => drawItem(it, false))}
+          {upper.map((it) => drawItem(it, true))}
+        </>
+      )}
 
       {turnRun && <TurnHandle design={design} run={turnRun} fs={fs} onDown={down({ kind: "turn", id: turnRun.id })} live={!!onTargetDown} />}
 
@@ -246,7 +323,33 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
         return (
           <g key={`tag-${w.id}`}>
             {/* one unit on a drawing: inches and fractions on the printed plan (K&B drawing standards) */}
-            <DimAligned p0={w.origin} p1={w.end} o={{ x: -w.n.x, y: -w.n.y }} d={t + fs * 1.4} fs={fs * 0.8} label={print ? fmtIn(w.length) : `${fmtIn(w.length)}  (${fmtFtIn(w.length)})`} />
+            {print ? (() => {
+              // three strings from the wall out: openings (inner), centerlines (center), overall (outer)
+              const o = { x: -w.n.x, y: -w.n.y };
+              const tiers: React.ReactNode[] = [];
+              const step = fs * 1.4;
+              let d = t + step;
+              const inner = w.open ? [] : openingStops(design.openings, w.id, w.length);
+              if (inner.length > 2) {
+                tiers.push(<DimChain key="in" origin={w.origin} u={w.u} o={o} d={d} stops={inner} fs={fs * 0.8} from={t} />);
+                d += step;
+              }
+              const cls = w.open ? [] : centerlines(design, w.id);
+              if (cls.length) {
+                const centers = new Map<number, { x: number; y: number }>();
+                for (const c of cls) {
+                  const key = Math.round(c * 1000) / 1000;
+                  const it = design.items.find((i) => i.run === w.id && Math.abs(i.offset + i.width / 2 - c) < 0.25);
+                  centers.set(key, pointOn(w, c, (it?.depth ?? 24) / 2));
+                }
+                tiers.push(<DimChain key="cl" origin={w.origin} u={w.u} o={o} d={d} stops={[0, ...cls, w.length]} fs={fs * 0.8} from={t} centers={centers} />);
+                d += step;
+              }
+              tiers.push(<DimChain key="all" origin={w.origin} u={w.u} o={o} d={d} stops={[0, w.length]} fs={fs * 0.8} from={t} />);
+              return tiers;
+            })() : (
+              <DimAligned p0={w.origin} p1={w.end} o={{ x: -w.n.x, y: -w.n.y }} d={t + fs * 1.4} fs={fs * 0.8} label={`${fmtIn(w.length)}  (${fmtFtIn(w.length)})`} />
+            )}
             {print ? null : (
               <g onPointerDown={down({ kind: "wall", id: w.id })} style={{ cursor: onTargetDown ? "pointer" : undefined }}>
                 <circle cx={mid.x} cy={mid.y} r={fs * 1.05} fill={on ? "#D03238" : "#FFFFFF"} stroke="#1A1D1F" strokeWidth={0.4} strokeDasharray={w.open ? "1.2 0.8" : undefined} />
@@ -255,6 +358,23 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
                 </text>
               </g>
             )}
+          </g>
+        );
+      })}
+      {dimIslands.map((isl) => {
+        // an island is located from the walls in two directions, with the centerlines of any fixture on it
+        const on = design.items.filter((i) => i.run === isl.id);
+        const r = islandRect(design, isl);
+        const centers = new Map<number, { x: number; y: number }>();
+        for (const it of on.filter((i) => CENTERLINE_STYLES.has(i.style))) {
+          const c = itemCenter(design, it);
+          if (c) centers.set(Math.round((c.x - minX) * 1000) / 1000, c);
+        }
+        return (
+          <g key={`isl-dim-${isl.id}`}>
+            <DimChain origin={{ x: minX, y: r.y0 }} u={{ x: 1, y: 0 }} o={{ x: 0, y: -1 }} d={fs * 1.6} fs={fs * 0.8}
+              stops={[0, r.x0 - minX, ...centers.keys()]} centers={centers} />
+            <DimChain origin={{ x: r.x0, y: minY }} u={{ x: 0, y: 1 }} o={{ x: -1, y: 0 }} d={fs * 1.6} fs={fs * 0.8} stops={[0, r.y0 - minY]} />
           </g>
         );
       })}
@@ -285,8 +405,11 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
         const my = pts.reduce((n, p) => n + p.y, 0) / Math.max(1, pts.length);
         const B = shape.bounds;
         const centers = (marks ?? []).map((m) => markerCenter(m.wallId)).filter((c): c is { x: number; y: number } => !!c);
-        const options = [0, 0.18, -0.18, 0.3, -0.3].flatMap((fy) => [0, 0.2, -0.2].map((fx) => ({ x: mx + fx * (B.x1 - B.x0), y: my + fy * (B.y1 - B.y0) })));
-        const clear = (p: { x: number; y: number }) => Math.min(Infinity, ...centers.map((c) => Math.hypot(c.x - p.x, c.y - p.y)));
+        const options = [0, 0.12, -0.12, 0.18, -0.18, 0.24, -0.24, 0.3, -0.3].flatMap((fy) => [0, 0.2, -0.2].map((fx) => ({ x: mx + fx * (B.x1 - B.x0), y: my + fy * (B.y1 - B.y0) })));
+        const rects = design.islands.filter((i) => design.items.some((x) => x.run === i.id)).map((i) => islandRect(design, i));
+        const toRect = (p: { x: number; y: number }, q: { x0: number; y0: number; x1: number; y1: number }) =>
+          Math.hypot(Math.max(q.x0 - p.x, 0, p.x - q.x1), Math.max(q.y0 - p.y, 0, p.y - q.y1));
+        const clear = (p: { x: number; y: number }) => Math.min(Infinity, ...centers.map((c) => Math.hypot(c.x - p.x, c.y - p.y)), ...rects.map((q) => toRect(p, q) * 1.6));
         const best = options.reduce((a, b) => (clear(b) > clear(a) + 0.01 ? b : a), options[0]);
         const cx = best.x;
         const cy = best.y;
