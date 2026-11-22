@@ -13,6 +13,8 @@ import { PrintSheet } from "@/components/print/PrintSheet";
 import type { Paper } from "@/lib/sheets";
 import { fillLine, fillWall } from "@/lib/fill";
 import { KitchenWizard } from "./KitchenWizard";
+import { MepPanel } from "./MepPanel";
+import { mepOf, mepPoint, moveMep, type MepItem } from "@/lib/mep";
 import {
   allFrames,
   angleGap,
@@ -42,7 +44,7 @@ import { RoomPanel } from "./RoomPanel";
 
 type Meta = Pick<DesignRecord, "name" | "customer_name" | "customer_phone" | "customer_address" | "designer_name" | "notes">;
 type SaveState = "saved" | "unsaved" | "saving" | "error" | "local";
-type Tab = "room" | "cabinets" | "openings" | "photos" | "details";
+type Tab = "room" | "cabinets" | "openings" | "mep" | "photos" | "details";
 
 const CATEGORY_LABEL: Record<Category, string> = {
   base: "Base cabinets",
@@ -491,6 +493,47 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
     const p = new DOMPoint(clientX, clientY).matrixTransform(ctm.inverse());
     return { x: p.x, y: p.y };
   };
+
+  // ---------- the Electrical tab: picking and dragging symbols in the top view ----------
+  const [mepSel, setMepSel] = useState<string | null>(null);
+  const mepDrag = useRef<{ id: string; svg: SVGSVGElement; start: { x: number; y: number }; from: MepItem; moved: boolean } | null>(null);
+  const startMepDrag = (e: ReactPointerEvent<SVGElement>, id: string) => {
+    const svg = (e.currentTarget as SVGElement).ownerSVGElement;
+    const m = mepOf(design).items.find((x) => x.id === id);
+    setMepSel(id);
+    if (!svg || !m || e.button !== 0) return;
+    mepDrag.current = { id, svg, start: svgPoint(svg, e.clientX, e.clientY), from: m, moved: false };
+  };
+  useEffect(() => {
+    const move = (e: PointerEvent) => {
+      const dr = mepDrag.current;
+      if (!dr) return;
+      const p = svgPoint(dr.svg, e.clientX, e.clientY);
+      if (!dr.moved) {
+        if (Math.hypot(p.x - dr.start.x, p.y - dr.start.y) < 1.5) return;
+        dr.moved = true;
+        begin();
+      }
+      preview((d) => {
+        const mep = mepOf(d);
+        const at = dr.from.wall ? mepPoint(d, dr.from).p : { x: dr.from.x, y: dr.from.y };
+        const moved = moveMep(d, dr.from, { x: at.x + p.x - dr.start.x, y: at.y + p.y - dr.start.y });
+        return { ...d, mep: { ...mep, items: mep.items.map((x) => (x.id === dr.id ? { ...moved, auto: false } : x)) } };
+      });
+    };
+    const up = () => {
+      if (mepDrag.current?.moved) commit();
+      mepDrag.current = null;
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+    };
+  });
 
   const handleTargetDown = (viewKind: "plan" | "elev", e: ReactPointerEvent<SVGElement>, target: DrawTarget) => {
     if (target.kind === "turn") {
@@ -986,18 +1029,19 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
               [
                 ["cabinets", "Cabinets"],
                 ["openings", "Doors & Windows"],
+                ["mep", "Electrical"],
                 ["room", "Room"],
                 ["details", "Customer"],
                 ...(uploadPhoto ? ([["photos", "Photos"]] as const) : []),
               ] as [Tab, string][]
             ).map(([t, label]) => (
-              <button key={t} role="tab" aria-selected={tab === t} className={`tab ${tab === t ? "tab-on" : ""}`} onClick={() => setTab(t)}>
+              <button key={t} role="tab" aria-selected={tab === t} className={`tab ${tab === t ? "tab-on" : ""}`} onClick={() => { setTab(t); if (t === "mep") { setView("plan"); setSelectedId(null); } }}>
                 {label}
               </button>
             ))}
           </nav>
 
-          {(tab === "cabinets" || tab === "openings") && (
+          {(tab === "cabinets" || tab === "openings" || tab === "mep") && (
             <div className="run-picker">
               <span className="field-label">{tab === "cabinets" ? "Add to" : "Add on"}</span>
               <div className="chips">
@@ -1130,6 +1174,11 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
             </div>
           )}
 
+          {tab === "mep" && (
+            <MepPanel design={design} apply={apply} selectedId={mepSel} setSelectedId={setMepSel}
+              wall={isWall(design.room, activeRunValid) ? activeRunValid : null} flash={flash} />
+          )}
+
           {tab === "photos" && uploadPhoto && <PhotosPanel design={design} apply={apply} uploadPhoto={uploadPhoto} flash={flash} />}
         </aside>
 
@@ -1196,8 +1245,9 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
                 box={box}
                 problemIds={problemIds}
                 selectedRun={activeRunValid}
-                onTargetDown={(e, t) => handleTargetDown("plan", e, t)}
-                onBackgroundDown={handleBackgroundDown}
+                onTargetDown={tab === "mep" ? undefined : (e, t) => handleTargetDown("plan", e, t)}
+                onBackgroundDown={tab === "mep" ? () => setMepSel(null) : handleBackgroundDown}
+                mep={tab === "mep" ? { items: mepOf(design).items, selectedId: mepSel, onDown: startMepDrag } : undefined}
                 className="stage-svg"
               />
             ) : (

@@ -18,6 +18,8 @@ import { PlanView, planBox, type ElevationMark } from "@/components/drawing/Plan
 import { View3D, DEFAULT_CAMERA } from "@/components/drawing/View3D";
 import { roomShape } from "@/lib/geometry";
 import { DROP_DOOR } from "@/lib/plan";
+import { GROUP_NAME, GROUP_ORDER, MEP_KINDS, TAG_MEANING, mepKey, mepOf, type MepItem, type MepSpec } from "@/lib/mep";
+import { MepLegendGlyph } from "@/components/drawing/MepSymbols";
 import { buildSchedule, type ScheduleRow } from "@/lib/schedule";
 import {
   FIRM, GENERAL_NOTES, INTERPRETATION, LIABILITY, PAPER, SCALES, copyright, drawingArea, fitScale, initials, roomName, sheetId,
@@ -230,6 +232,65 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
     ),
   }));
 
+  // ---------- the electrical, lighting and plumbing plan, and its schedules ----------
+  const mep = mepOf(design);
+  if (mep.items.length) {
+    const mepScale =
+      SCALES.find((s) => {
+        const b = planBox(design, s.k * 0.12, 3);
+        return b.width / s.k <= planSpace.width && b.height / s.k <= planSpace.height;
+      }) ?? fitScale(box.width, box.height, planSpace);
+    const mepId = sheetId(3, 1);
+    const schedId = sheetId(3, 2);
+    // the legend stays beside the plan; the notes join it when there is room, otherwise they lead the schedule sheet
+    const legendRows = new Set(mep.items.map(mepKey)).size + 1;
+    const notesOnPlan = paper === "tabloid" && legendRows <= 18;
+    const notes = mepNotes(mep);
+    add({
+      id: mepId, title: `${room} Electrical, Lighting and Plumbing Plan`, scale: mepScale.label,
+      body: (
+        <div className="ds-plan">
+          <div className="ds-plan-draw">
+            <PlanView design={design} catalog={catalog} print={{ scale: mepScale.k }} mep={{ items: mep.items }}
+              room={{ name: room, ceiling: `CLG. HT. ${fmtIn(design.room.ceiling)}` }} />
+            <TitleMarker n={1} title={`${room.toUpperCase()} MEP PLAN`} scale={mepScale.label} />
+          </div>
+          <aside className="ds-plan-side ds-mep-side" style={{ width: `${notesWidth}in` }}>
+            <div className="ds-north"><NorthArrow angle={northAngle(design)} /></div>
+            <h4>MEP legend</h4>
+            <MepLegend items={mep.items} />
+            {notesOnPlan ? (
+              <>
+                <h4>Plan notes</h4>
+                <ol>{notes.map((n, i) => <li key={i}>{n}</li>)}</ol>
+              </>
+            ) : <p className="ds-small"><b>Plan notes are on sheet {schedId}.</b></p>}
+            <p className="ds-small">Lighting and MEP schedules: sheet {schedId}.</p>
+          </aside>
+        </div>
+      ),
+    });
+    add({
+      id: schedId, title: "Lighting and MEP Schedules", scale: "None",
+      body: (
+        <>
+          {!notesOnPlan && (
+            <div className="ds-schedule">
+              <h3>MEP plan notes (sheet {mepId})</h3>
+              <ol className="ds-notes-cols">{notes.map((n, i) => <li key={i}>{n}</li>)}</ol>
+            </div>
+          )}
+          <MepSchedules items={mep.items} specs={mep.specs} room={room} sheet={mepId} parts={paper === "tabloid" ? ["lighting", "mep"] : ["lighting"]} />
+        </>
+      ),
+    });
+    // on Letter the MEP schedule gets its own sheet, right after
+    if (paper !== "tabloid") add({
+      id: sheetId(3, 3), title: "MEP Schedule", scale: "None",
+      body: <MepSchedules items={mep.items} specs={mep.specs} room={room} sheet={mepId} parts={["mep"]} />,
+    });
+  }
+
   if (has3d) add({
     id: sheetId(9, 1), title: "Presentation View", scale: "Not to scale",
     body: (
@@ -306,6 +367,120 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
     </div>
   );
 
+}
+
+/** The MEP legend: every symbol on the plan, grouped mechanical, electrical, lighting, plumbing (K&B drawing standards). */
+function MepLegend({ items }: { items: MepItem[] }) {
+  const rows = new Map<string, MepItem>();
+  for (const g of GROUP_ORDER) for (const m of items) if (MEP_KINDS[m.kind].group === g && !rows.has(mepKey(m))) rows.set(mepKey(m), m);
+  let group = "";
+  return (
+    <div className="ds-legend">
+      {[...rows.values()].map((m) => {
+        const info = MEP_KINDS[m.kind];
+        const head = info.group !== group ? (group = info.group, <div className="ds-legend-group" key={`g-${info.group}`}>{GROUP_NAME[info.group]}</div>) : null;
+        const tag = m.tag ? ` ${m.tag}${TAG_MEANING[m.tag] ? ` (${TAG_MEANING[m.tag]})` : ""}` : "";
+        return (
+          <div key={mepKey(m)}>
+            {head}
+            <div className="ds-legend-row">
+              <MepLegendGlyph kind={m.kind} tag={m.tag} />
+              <span>{info.name}{tag}{m.aff ? `. ${m.aff}` : ""}{m.kind === "exhaust" && m.note ? `. ${m.note}` : ""}</span>
+            </div>
+          </div>
+        );
+      })}
+      <div className="ds-legend-row">
+        <svg width="0.45in" height="0.26in" viewBox="0 0 22 14" aria-hidden="true"><path d="M 1 11 Q 11 2 21 11" fill="none" stroke="#000" strokeWidth={0.9} strokeDasharray="5 1.6 0.6 1.6" /></svg>
+        <span>Switching line: the switch and the lights it controls</span>
+      </div>
+    </div>
+  );
+}
+
+function mepNotes(mep: ReturnType<typeof mepOf>): string[] {
+  const has = (k: string) => mep.items.some((m) => m.kind === k);
+  return [
+    "Read with the floor plan and the interior elevations. All work to the current electrical, plumbing and mechanical codes; the electrician sizes and circuits everything.",
+    "Countertop receptacles are ground fault protected (GFCI), in the backsplash, so that no point along the counter is more than 24\" from a receptacle.",
+    "Dishwasher, disposal, refrigerator, microwave and range each on their own circuit as the code and the manufacturer require.",
+    ...(mep.rangeFuel === "gas" ? ["Range is gas: gas shut-off valve and a 120V receptacle for the igniter behind the range, within reach once it is pulled out."] : []),
+    ...(mep.rangeFuel === "electric" ? ["Range is electric: 240V range receptacle behind the range."] : []),
+    ...(mep.rangeFuel === null ? ["Range fuel not chosen yet: confirm gas or electric before rough-in."] : []),
+    ...(has("exhaust") ? ["Hood exhaust in rigid metal duct, the size the hood manufacturer calls for, to the exterior. Make-up air where the code requires it."] : []),
+    "Locate the vent stack and waste lines in the field before rough-in; keep every clean-out accessible and clear of the cabinets.",
+    "Light switches 48\" above the finished floor to the center of the box. Dimmers where shown (DM).",
+    "Recessed and pendant lights are located by the dimensions to their centers from the walls shown.",
+  ];
+}
+
+/** Lighting and switching schedule on top, MEP schedule below (K&B drawing standards, Chapter 11). */
+function MepSchedules({ items, specs, room, sheet, parts }: { items: MepItem[]; specs: Record<string, MepSpec>; room: string; sheet: string; parts: ("lighting" | "mep")[] }) {
+  const rows = (which: "lighting" | "mep") => {
+    const map = new Map<string, { m: MepItem; qty: number; len: number }>();
+    for (const g of GROUP_ORDER) for (const m of items) {
+      const info = MEP_KINDS[m.kind];
+      if (info.group !== g || info.schedule !== which) continue;
+      const k = mepKey(m);
+      const r = map.get(k) ?? { m, qty: 0, len: 0 };
+      r.qty += 1;
+      r.len += m.length ?? 0;
+      map.set(k, r);
+    }
+    return [...map.entries()];
+  };
+  const cell = (v?: string) => v?.trim() || "";
+  const lighting = rows("lighting");
+  const others = rows("mep");
+  return (
+    <div className="ds-schedule">
+      {parts.includes("lighting") && <>
+      <h3>Lighting and switching schedule ({room}, sheet {sheet})</h3>
+      <table className="ds-table">
+        <thead><tr><th>Key</th><th>Description</th><th>Manufacturer</th><th>Product no.</th><th>Color / finish</th><th>Kelvin / CRI</th><th>Notes</th><th>Qty</th><th>Supplied by</th><th>Installed by</th></tr></thead>
+        <tbody>
+          {lighting.map(([k, r]) => {
+            const sp = specs[k] ?? {};
+            return (
+              <tr key={k}>
+                <td className="tabular"><b>{r.m.tag || (r.m.kind === "switch" ? "S" : "-")}</b></td>
+                <td>{cell(sp.description) || MEP_KINDS[r.m.kind].name}{r.m.tag && TAG_MEANING[r.m.tag] ? `, ${TAG_MEANING[r.m.tag]}` : ""}</td>
+                <td>{cell(sp.manufacturer)}</td><td>{cell(sp.product)}</td><td>{cell(sp.finish)}</td><td>{cell(sp.kelvin)}</td>
+                <td>{cell(sp.notes) || r.m.aff}</td>
+                <td className="tabular">{r.qty} ea{r.len ? `, ${fmtIn(r.len)} total` : ""}</td>
+                <td>{cell(sp.suppliedBy)}</td><td>{cell(sp.installedBy)}</td>
+              </tr>
+            );
+          })}
+          {!lighting.length && <tr><td colSpan={10}>No lights or switches on the plan.</td></tr>}
+        </tbody>
+      </table>
+      </>}
+      {parts.includes("mep") && <>
+      <h3>MEP schedule ({room}, sheet {sheet})</h3>
+      <table className="ds-table">
+        <thead><tr><th>Key</th><th>Description</th><th>Manufacturer</th><th>Product no.</th><th>Color / finish</th><th>Notes</th><th>Qty</th><th>Supplied by</th><th>Installed by</th></tr></thead>
+        <tbody>
+          {others.map(([k, r]) => {
+            const sp = specs[k] ?? {};
+            return (
+              <tr key={k}>
+                <td className="tabular"><b>{r.m.tag || "-"}</b></td>
+                <td>{cell(sp.description) || MEP_KINDS[r.m.kind].name}{r.m.tag && TAG_MEANING[r.m.tag] ? `, ${TAG_MEANING[r.m.tag]}` : ""}</td>
+                <td>{cell(sp.manufacturer)}</td><td>{cell(sp.product)}</td><td>{cell(sp.finish)}</td>
+                <td>{cell(sp.notes) || [r.m.aff, r.m.note].filter(Boolean).join(". ")}</td>
+                <td className="tabular">{r.qty} ea</td>
+                <td>{cell(sp.suppliedBy)}</td><td>{cell(sp.installedBy)}</td>
+              </tr>
+            );
+          })}
+          {!others.length && <tr><td colSpan={9}>Nothing on the plan yet.</td></tr>}
+        </tbody>
+      </table>
+      </>}
+      <p className="ds-small">Blank cells are filled in on the Electrical tab of the design, or by hand before the drawings are issued.</p>
+    </div>
+  );
 }
 
 /** The plan legend: the line types and symbols used on the plan (K&B drawing standards: a legend on every plan). */

@@ -225,6 +225,8 @@ export interface DesignData {
   // Missing: "Kitchen" and Wall A.
   roomName?: string;
   northWall?: string | null;
+  // The electrical, lighting and plumbing plan (src/lib/mep.ts). Missing: nothing laid out yet.
+  mep?: import("./mep").MepData;
 }
 
 export interface DesignRecord {

@@ -12,6 +12,8 @@ import type { DesignData, Island, Opening, PlacedItem } from "@/lib/types";
 import { allFrames, islandDepth, islandFrame, islandRect, itemCenter, itemLabel, itemQuad, pointOn, pointsAttr, roomShape, runQuad, type RunFrame, type Vec } from "@/lib/geometry";
 import { fmtFtIn, fmtIn } from "@/lib/units";
 import { DimAligned, DimChain } from "./dims";
+import { MepLayer } from "./MepSymbols";
+import { MEP_KINDS, type MepItem } from "@/lib/mep";
 import { CENTERLINE_STYLES, DROP_DOOR, applianceDoors, centerlines, counterOutlines, openingStops, planLine, planTiers } from "@/lib/plan";
 import type { DrawTarget, ViewProps } from "./ElevationView";
 import { PROBLEM, PaintDefs, SELECT, finishPaint, monoPaint } from "./paint";
@@ -64,27 +66,61 @@ function TurnHandle({ design, run, fs, onDown, live }: { design: DesignData; run
   );
 }
 
+/** The walls that carry the light positions on the MEP plan: the top one and the left one. */
+function lightWalls(design: DesignData): string[] {
+  const walls = roomShape(design.room).walls.filter((w) => !w.open);
+  const top = walls.filter((w) => w.u.x > 0.9).sort((a, b) => a.origin.y - b.origin.y)[0];
+  const left = walls.filter((w) => w.u.y < -0.9).sort((a, b) => a.origin.x - b.origin.x)[0];
+  return [top?.id, left?.id].filter((x): x is string => !!x);
+}
+
+/** Where each ceiling light falls along a wall, for its dimension string (only on the top and left walls). */
+export function mepLightStops(design: DesignData, items: MepItem[], w: RunFrame): number[] {
+  if (!lightWalls(design).includes(w.id)) return [];
+  const out = new Set<number>();
+  for (const m of items) {
+    if (MEP_KINDS[m.kind].group !== "lighting" || MEP_KINDS[m.kind].mount !== "ceiling") continue;
+    const s = (m.x - w.origin.x) * w.u.x + (m.y - w.origin.y) * w.u.y;
+    if (s > 0.5 && s < w.length - 0.5) out.add(Math.round(s * 2) / 2);
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+function mepTiers(design: DesignData, items: MepItem[]): number {
+  let most = 1;
+  for (const w of roomShape(design.room).walls) {
+    if (w.open) continue;
+    most = Math.max(most, 1 + (centerlines(design, w.id).length ? 1 : 0) + (mepLightStops(design, items, w).length ? 1 : 0));
+  }
+  return most;
+}
+
 /** The top view's drawing frame in real inches, with room around the walls for dimensions and tags. */
-export function planBox(design: DesignData, fs?: number): { x: number; y: number; width: number; height: number; fs: number } {
+export function planBox(design: DesignData, fs?: number, tiers?: number): { x: number; y: number; width: number; height: number; fs: number } {
   const B = roomShape(design.room).bounds;
   const f = fs ?? Math.max(3, Math.min(6, Math.max(B.x1 - B.x0, B.y1 - B.y0) / 38));
   // the printed plan keeps room for three dimension strings and the centerline symbols outside the walls
-  const M = fs === undefined ? f * 6 : (design.room.wallThickness ?? 4.5) + f * (1.4 * planTiers(design) + 1.4);
+  const M = fs === undefined ? f * 6 : (design.room.wallThickness ?? 4.5) + f * (1.4 * (tiers ?? planTiers(design)) + 1.4);
   return { x: B.x0 - M, y: B.y0 - M, width: B.x1 - B.x0 + 2 * M, height: B.y1 - B.y0 + 2 * M, fs: f };
 }
 
 /** Elevation markers for the printed plan: which wall each looks at and its number (north wall first, clockwise). */
 export type ElevationMark = { wallId: string; n: number };
 
-export function PlanView({ design, catalog, selectedId, selectedIds, problemIds, onTargetDown, onBackgroundDown, className, selectedRun, box, print, marks, room }: ViewProps & {
+export function PlanView({ design, catalog, selectedId, selectedIds, problemIds, onTargetDown, onBackgroundDown, className, selectedRun, box, print, marks, room, mep }: ViewProps & {
   selectedRun?: string | null; box?: { x0: number; y0: number; x1: number; y1: number } | null;
   /** On the printed plan: the elevation markers and the room's name and ceiling height. */
   marks?: ElevationMark[]; room?: { name: string; ceiling: string };
+  /**
+   * The electrical, lighting and plumbing plan: walls in outline, cabinets in light gray behind the
+   * symbols (K&B drawing standards, Chapter 11). With `onDown`, the symbols can be picked and dragged.
+   */
+  mep?: { items: MepItem[]; selectedId?: string | null; onDown?: (e: ReactPointerEvent<SVGElement>, id: string) => void };
 }) {
   const isSelected = (id: string) => (selectedIds ? selectedIds.has(id) : selectedId === id);
   const t = design.room.wallThickness;
   const shape = roomShape(design.room);
-  const frameBox = planBox(design, print ? print.scale * 0.12 : undefined);
+  const frameBox = planBox(design, print ? print.scale * 0.12 : undefined, print && mep ? mepTiers(design, mep.items) : undefined);
   const fs = frameBox.fs;
   const mono = !!print;
   const frames = new Map(allFrames(design).map((f) => [f.id, f]));
@@ -241,7 +277,9 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
                 <line x1={w.origin.x} y1={w.origin.y} x2={w.end.x} y2={w.end.y} stroke={wallColor(w.id)} strokeWidth={0.5} strokeDasharray="3 2" />
               </>
             ) : (
-              <polygon points={band} fill={wallColor(w.id)} stroke={wallColor(w.id)} strokeWidth={0.15} strokeLinejoin="round" />
+              print && mep
+                ? <polygon points={band} fill="#FFFFFF" stroke="#000000" strokeWidth={0.45} strokeLinejoin="miter" />
+                : <polygon points={band} fill={wallColor(w.id)} stroke={wallColor(w.id)} strokeWidth={0.15} strokeLinejoin="round" />
             )}
           </g>
         );
@@ -284,7 +322,20 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
         );
       })}
 
-      {mono ? (
+      {mep ? (
+        <g opacity={print ? 1 : 0.4} style={{ pointerEvents: "none" }}>
+          {/* cabinets, counters and appliances kept light, so the symbols read first */}
+          {counterOutlines(design, frames).map((q, i) => (
+            <polygon key={`ctr-${i}`} points={pointsAttr(q)} fill="none" stroke="#A6A9AC" strokeWidth={0.3} />
+          ))}
+          {design.items.map((it) => {
+            const frame = frames.get(it.run);
+            if (!frame) return null;
+            const hidden = planLine(design, it) === "hidden";
+            return <polygon key={it.id} points={pointsAttr(itemQuad(it, frame))} fill="none" stroke="#A6A9AC" strokeWidth={0.25} strokeDasharray={hidden ? `${fs * 0.5} ${fs * 0.3}` : undefined} />;
+          })}
+        </g>
+      ) : mono ? (
         <>
           {/* cut at the ceiling: what is under the counter first, then the countertop, then what is seen from above */}
           {design.items.filter((it) => planLine(design, it) === "hidden").map((it) => drawItem(it, it.mountHeight > 0, "shape"))}
@@ -315,7 +366,9 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
         </>
       )}
 
-      {turnRun && <TurnHandle design={design} run={turnRun} fs={fs} onDown={down({ kind: "turn", id: turnRun.id })} live={!!onTargetDown} />}
+      {mep && <MepLayer design={design} items={mep.items} selectedId={mep.selectedId} onDown={mep.onDown} fs={fs} />}
+
+      {turnRun && !mep && <TurnHandle design={design} run={turnRun} fs={fs} onDown={down({ kind: "turn", id: turnRun.id })} live={!!onTargetDown} />}
 
       {shape.walls.map((w) => {
         const mid = pointOn(w, w.length / 2, -(t + fs * 3.6));
@@ -329,7 +382,7 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
               const tiers: React.ReactNode[] = [];
               const step = fs * 1.4;
               let d = t + step;
-              const inner = w.open ? [] : openingStops(design.openings, w.id, w.length);
+              const inner = w.open || mep ? [] : openingStops(design.openings, w.id, w.length);
               if (inner.length > 2) {
                 tiers.push(<DimChain key="in" origin={w.origin} u={w.u} o={o} d={d} stops={inner} fs={fs * 0.8} from={t} />);
                 d += step;
@@ -344,6 +397,14 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
                 }
                 tiers.push(<DimChain key="cl" origin={w.origin} u={w.u} o={o} d={d} stops={[0, ...cls, w.length]} fs={fs * 0.8} from={t} centers={centers} />);
                 d += step;
+              }
+              if (mep) {
+                // lights are located from two walls: the top wall and the left wall carry their positions
+                const lightStops = mepLightStops(design, mep.items, w);
+                if (lightStops.length) {
+                  tiers.push(<DimChain key="lt" origin={w.origin} u={w.u} o={o} d={d} stops={[0, ...lightStops, w.length]} fs={fs * 0.8} from={t} />);
+                  d += step;
+                }
               }
               tiers.push(<DimChain key="all" origin={w.origin} u={w.u} o={o} d={d} stops={[0, w.length]} fs={fs * 0.8} from={t} />);
               return tiers;
@@ -404,7 +465,11 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
         const mx = pts.reduce((n, p) => n + p.x, 0) / Math.max(1, pts.length);
         const my = pts.reduce((n, p) => n + p.y, 0) / Math.max(1, pts.length);
         const B = shape.bounds;
-        const centers = (marks ?? []).map((m) => markerCenter(m.wallId)).filter((c): c is { x: number; y: number } => !!c);
+        const centers = [
+          ...(marks ?? []).map((m) => markerCenter(m.wallId)).filter((c): c is { x: number; y: number } => !!c),
+          // on the MEP plan, the lights and other symbols out in the room
+          ...(mep?.items ?? []).filter((m) => !m.wall).map((m) => ({ x: m.x, y: m.y })),
+        ];
         const options = [0, 0.12, -0.12, 0.18, -0.18, 0.24, -0.24, 0.3, -0.3].flatMap((fy) => [0, 0.2, -0.2].map((fx) => ({ x: mx + fx * (B.x1 - B.x0), y: my + fy * (B.y1 - B.y0) })));
         const rects = design.islands.filter((i) => design.items.some((x) => x.run === i.id)).map((i) => islandRect(design, i));
         const toRect = (p: { x: number; y: number }, q: { x0: number; y0: number; x1: number; y1: number }) =>

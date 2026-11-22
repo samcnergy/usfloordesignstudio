@@ -339,6 +339,8 @@ textarea.input { resize: vertical; }
 .ds-legend { display: flex; flex-direction: column; gap: 2px; font-size: 6.5pt; }
 .ds-legend-row { display: flex; align-items: center; gap: 5px; line-height: 1.15; }
 .ds-legend-row svg { flex: none; }
+.ds-legend-group { font-weight: 700; font-size: 6.5pt; margin-top: 3px; text-transform: uppercase; letter-spacing: 0.04em; }
+.ds-schedule h3 + .ds-table { margin-bottom: 10px; }
 .ds-small { font-size: 6.5pt; color: #333; margin: 4px 0 0; }
 .ds-disclaimer { font-size: 7pt; font-style: italic; margin: 4px 0 0; }
 .ds-marker { display: flex; align-items: center; gap: 0.12in; margin-top: 0.08in; }
@@ -426,3 +428,22 @@ textarea.input { resize: vertical; }
   .btn, .chip { min-height: 44px; }
   .sel-bar .btn { min-height: 48px; padding: 0 16px; }
 }
+
+/* Electrical tab (MEP plan) */
+.mep-palette { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.mep-add { display: flex; align-items: center; gap: 6px; min-height: 40px; padding: 4px 8px; border: 1px solid var(--line, #D9D7D0); border-radius: 8px; background: #FFFFFF; font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.mep-add:hover { border-color: #1A1D1F; }
+.mep-add svg { flex: none; }
+.mep-selected { border: 1px solid #D03238; border-radius: 8px; padding: 10px; }
+.mep-selected-head { display: flex; align-items: center; gap: 8px; }
+.mep-spec { border-bottom: 1px solid var(--line, #E4E2DC); padding: 4px 0; }
+.mep-spec-head { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 36px; background: none; border: 0; font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.mep-spec-head .muted { margin-left: auto; }
+@media (pointer: coarse) { .mep-add { min-height: 48px; } }
+
+/* MEP sheet: the legend and notes share the side column, so both are set tighter */
+.ds-plan-side.ds-mep-side { font-size: 6.5pt; gap: 2px; }
+.ds-mep-side .ds-legend-row { line-height: 1.1; }
+.ds-mep-side .ds-legend-row svg { height: 0.2in; width: 0.36in; }
+.ds-mep-side li { margin-bottom: 1px; }
+.ds-notes-cols { columns: 2; column-gap: 18px; font-size: 7pt; margin: 0 0 8px; padding-left: 14px; }
