@@ -16,8 +16,10 @@ import { MepLayer } from "./MepSymbols";
 import { BacksplashTags, FinishCross, FloorPattern } from "./FinishSymbols";
 import type { FinishData, FinishUse } from "@/lib/finishes";
 import { blockingSpans } from "@/lib/demo";
+import { counterRuns, rangeOpenings, sinkCuts } from "@/lib/countertop";
+import type { SinkSpec } from "@/lib/finishes";
 import { MEP_KINDS, type MepItem } from "@/lib/mep";
-import { BASE_TOP, COUNTER_STYLES, CENTERLINE_STYLES, DROP_DOOR, applianceDoors, centerlines, counterOutlines, openingStops, planLine, planTiers } from "@/lib/plan";
+import { BASE_TOP, COUNTER_STYLES, CENTERLINE_STYLES, DROP_DOOR, OVERHANG, applianceDoors, centerlines, counterOutlines, openingStops, planLine, planTiers } from "@/lib/plan";
 import type { DrawTarget, ViewProps } from "./ElevationView";
 import { PROBLEM, PaintDefs, SELECT, finishPaint, monoPaint } from "./paint";
 
@@ -130,7 +132,7 @@ export function planBox(design: DesignData, fs?: number, tiers?: number): { x: n
 /** Elevation markers for the printed plan: which wall each looks at and its number (north wall first, clockwise). */
 export type ElevationMark = { wallId: string; n: number };
 
-export function PlanView({ design, catalog, selectedId, selectedIds, problemIds, onTargetDown, onBackgroundDown, className, selectedRun, box, print, marks, room, mep, finish, demo }: ViewProps & {
+export function PlanView({ design, catalog, selectedId, selectedIds, problemIds, onTargetDown, onBackgroundDown, className, selectedRun, box, print, marks, room, mep, finish, demo, counter }: ViewProps & {
   selectedRun?: string | null; box?: { x0: number; y0: number; x1: number; y1: number } | null;
   /** On the printed plan: the elevation markers and the room's name and ceiling height. */
   marks?: ElevationMark[]; room?: { name: string; ceiling: string };
@@ -143,11 +145,13 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
   finish?: { data: FinishData; keys: Partial<Record<FinishUse, string>>; counterThick: number };
   /** The demolition and construction plan: wall status, new openings with their keys, wall blocking; no cabinets. */
   demo?: { keys: Map<string, string> };
+  /** The countertop plan: work surfaces, sink cutouts and faucet holes, range openings; cabinets very light, no appliances. */
+  counter?: { spec?: SinkSpec; mount?: string };
 }) {
   const isSelected = (id: string) => (selectedIds ? selectedIds.has(id) : selectedId === id);
   const t = design.room.wallThickness;
   const shape = roomShape(design.room);
-  const frameBox = planBox(design, print ? print.scale * 0.12 : undefined, print && mep ? mepTiers(design, mep.items) : print && finish ? 1 : print && demo ? 3 : undefined);
+  const frameBox = planBox(design, print ? print.scale * 0.12 : undefined, print && mep ? mepTiers(design, mep.items) : print && finish ? 1 : print && (demo || counter) ? 3 : undefined);
   const fs = frameBox.fs;
   const mono = !!print;
   const frames = new Map(allFrames(design).map((f) => [f.id, f]));
@@ -382,7 +386,60 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
         );
       })}
 
-      {print && demo ? (
+      {print && counter ? (
+        <g>
+          {/* the base cabinets in a very light line under the work surfaces; appliances are not drawn */}
+          {design.items.filter((it) => it.mountHeight === 0 && it.category !== "appliance").map((it) => {
+            const frame = frames.get(it.run);
+            return frame ? <polygon key={it.id} points={pointsAttr(itemQuad(it, frame))} fill="none" stroke="#C4C6C8" strokeWidth={0.18} /> : null;
+          })}
+          {counterOutlines(design, frames).map((q, i) => (
+            <polygon key={`ctr-${i}`} points={pointsAttr(q)} fill="none" stroke="#000000" strokeWidth={0.5} />
+          ))}
+          {sinkCuts(design, frames, counter.spec, counter.mount).map((c, i) => {
+            const f = frames.get(c.run)!;
+            const mid = pointOn(f, c.s, (c.back + c.front) / 2);
+            const cl0 = pointOn(f, c.s, c.back + 1);
+            const cl1 = pointOn(f, c.s, c.front - 1);
+            const dash = `${fs * 1.2} ${fs * 0.25} ${fs * 0.25} ${fs * 0.25}`;
+            return (
+              <g key={`sink-${i}`}>
+                {c.outline ? (
+                  c.apron
+                    ? <polyline points={pointsAttr([c.outline[3], c.outline[0], c.outline[1], c.outline[2]])} fill="none" stroke="#000000" strokeWidth={0.45} />
+                    : <polygon points={pointsAttr(c.outline)} fill="#FFFFFF" stroke="#000000" strokeWidth={0.45} />
+                ) : (
+                  <text x={mid.x} y={mid.y} fontSize={fs * 0.7} textAnchor="middle" fill="#000000">SINK: CUTOUT PER TEMPLATE</text>
+                )}
+                <line x1={cl0.x} y1={cl0.y} x2={cl1.x} y2={cl1.y} stroke="#000000" strokeWidth={0.18} strokeDasharray={dash} />
+                {c.holes.map((h, k) => counter.spec?.holeSize
+                  ? <circle key={k} cx={h.x} cy={h.y} r={counter.spec.holeSize / 2} fill="#FFFFFF" stroke="#000000" strokeWidth={0.3} />
+                  : <g key={k}><line x1={h.x - 1} y1={h.y} x2={h.x + 1} y2={h.y} stroke="#000" strokeWidth={0.25} /><line x1={h.x} y1={h.y - 1} x2={h.x} y2={h.y + 1} stroke="#000" strokeWidth={0.25} /></g>)}
+                {c.holes.length > 1 && (
+                  <DimAligned p0={c.holes[0]} p1={c.holes[c.holes.length - 1]} o={{ x: -f.n.x, y: -f.n.y }} d={fs * 0.9} fs={fs * 0.7} />
+                )}
+                {c.holes.length > 0 && c.holeT !== null && (() => {
+                  // how far the faucet holes sit from the back edge of the counter
+                  const side = (counter.spec?.cutout?.w ?? 20) / 2 + fs * 1.5;
+                  return <DimAligned p0={pointOn(f, c.s + side, c.back)} p1={pointOn(f, c.s + side, c.holeT)} o={f.u} d={0} fs={fs * 0.7} />;
+                })()}
+              </g>
+            );
+          })}
+          {/* the clear opening between the counters at each range */}
+          {shape.walls.flatMap((w) => rangeOpenings(design, w.id).map((r, i) => (
+            <g key={`rng-${w.id}-${i}`}>
+              <DimAligned p0={pointOn(w, r.s0, r.depth)} p1={pointOn(w, r.s1, r.depth)} o={w.n} d={fs * 1.2} fs={fs * 0.75} label={`${fmtIn(r.s1 - r.s0)} RANGE OPENING`} />
+            </g>
+          )))}
+          {/* counter depth at the end of each run */}
+          {[...frames.values()].filter((f) => f.kind === "wall").flatMap((f) => counterRuns(design, f.id).map(([a, b], i) => {
+            const depth = Math.max(...design.items.filter((it) => it.run === f.id && it.mountHeight === 0 && it.offset < b && a < it.offset + it.width && COUNTER_STYLES.has(it.style)).map((it) => it.depth)) + OVERHANG;
+            const sAt = b - Math.min(6, (b - a) / 3);
+            return <DimAligned key={`dep-${f.id}-${i}`} p0={pointOn(f, sAt, 0)} p1={pointOn(f, sAt, depth)} o={f.u} d={0} fs={fs * 0.75} />;
+          }))}
+        </g>
+      ) : print && demo ? (
         <g>
           {/* blocking in the wall for the wall cabinets and hood; no cabinets on the construction plan */}
           {blockingSpans(design).map((b, i) => {
@@ -457,7 +514,28 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
         return (
           <g key={`tag-${w.id}`}>
             {/* one unit on a drawing: inches and fractions on the printed plan (K&B drawing standards) */}
-            {print && demo ? (() => {
+            {print && counter ? (() => {
+              // up to three strings: the cutout centers, the counter length, the wall length (K&B drawing standards, Chapter 13)
+              if (w.open) return null;
+              const o = { x: -w.n.x, y: -w.n.y };
+              const tiers: React.ReactNode[] = [];
+              const step = fs * 1.4;
+              let d = t + step;
+              const cuts = sinkCuts(design, frames, counter.spec, counter.mount).filter((c) => c.run === w.id);
+              if (cuts.length) {
+                const centers = new Map<number, { x: number; y: number }>();
+                for (const c of cuts) centers.set(Math.round(c.s * 1000) / 1000, pointOn(w, c.s, (c.back + c.front) / 2));
+                tiers.push(<DimChain key="cut" origin={w.origin} u={w.u} o={o} d={d} stops={[0, ...centers.keys(), w.length]} fs={fs * 0.8} from={t} centers={centers} />);
+                d += step;
+              }
+              const spans = counterRuns(design, w.id);
+              if (spans.length) {
+                tiers.push(<DimChain key="ctr" origin={w.origin} u={w.u} o={o} d={d} stops={[0, ...spans.flat(), w.length]} fs={fs * 0.8} from={t} />);
+                d += step;
+              }
+              tiers.push(<DimChain key="all" origin={w.origin} u={w.u} o={o} d={d} stops={[0, w.length]} fs={fs * 0.8} from={t} />);
+              return tiers;
+            })() : print && demo ? (() => {
               // only the changes: new openings by their centerlines from the corner, the blocking, and a new wall's length
               const o = { x: -w.n.x, y: -w.n.y };
               const tiers: React.ReactNode[] = [];
@@ -531,7 +609,7 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
           </g>
         );
       })}
-      {finish && dimIslands.map((isl) => {
+      {(finish || counter) && dimIslands.map((isl) => {
         const f = frames.get(isl.id);
         if (!f) return null;
         const q = counterOutlines(design, new Map([[isl.id, f]])).flat();
@@ -545,7 +623,19 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
           </g>
         );
       })}
-      {!finish && !demo && dimIslands.map((isl) => {
+      {counter && dimIslands.map((isl) => {
+        // a sink on the island: its centerline from the end of the island top
+        const f = frames.get(isl.id);
+        if (!f) return null;
+        const cuts = sinkCuts(design, frames, counter.spec, counter.mount).filter((c) => c.run === isl.id);
+        if (!cuts.length) return null;
+        const len = Math.max(...design.items.filter((i) => i.run === isl.id).map((i) => i.offset + i.width));
+        const centers = new Map<number, { x: number; y: number }>();
+        for (const c of cuts) centers.set(Math.round((c.s + OVERHANG) * 1000) / 1000, pointOn(f, c.s, (c.back + c.front) / 2));
+        return <DimChain key={`isl-sink-${isl.id}`} origin={pointOn(f, -OVERHANG, -OVERHANG)} u={f.u} o={{ x: -f.n.x, y: -f.n.y }} d={fs * 1.4} fs={fs * 0.8}
+          stops={[0, ...centers.keys(), len + 2 * OVERHANG]} centers={centers} />;
+      })}
+      {!finish && !demo && !counter && dimIslands.map((isl) => {
         // an island is located from the walls in two directions, with the centerlines of any fixture on it
         const on = design.items.filter((i) => i.run === isl.id);
         const r = islandRect(design, isl);

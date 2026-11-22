@@ -6,7 +6,7 @@
 // (with quantities) are made from these.
 
 import { useState } from "react";
-import { FINISH_USES, MATERIALS_FOR, MATERIAL_NAME, USE_NAME, finishKeys, finishQuantity, finishesOf, type FinishData, type FinishEntry, type FinishUse } from "@/lib/finishes";
+import { FINISH_USES, MATERIALS_FOR, MATERIAL_NAME, USE_NAME, finishKeys, finishQuantity, finishesOf, type FinishData, type FinishEntry, type FinishUse, type SinkSpec } from "@/lib/finishes";
 import type { Catalog, DesignData } from "@/lib/types";
 
 const FIELDS: [keyof FinishEntry, string, string][] = [
@@ -32,6 +32,7 @@ export function FinishPanel({ design, catalog, apply }: { design: DesignData; ca
     return { ...f, uses };
   });
   const chip = (on: boolean) => `chip ${on ? "chip-on" : ""}`;
+  const setSink = (patch: Partial<SinkSpec>) => set((f) => ({ ...f, sink: { ...(f.sink ?? {}), ...patch } }));
 
   return (
     <div className="panel-scroll stack">
@@ -84,7 +85,7 @@ export function FinishPanel({ design, catalog, apply }: { design: DesignData; ca
       <div className="field">
         <span className="field-label">Countertop edge</span>
         <div className="chips">
-          {["eased", "1/4\" bevel", "half bullnose", "full bullnose", "ogee", "mitered"].map((x) => (
+          {["square", "eased", "1/4\" bevel", "half bullnose", "full bullnose", "ogee", "mitered"].map((x) => (
             <button key={x} className={chip(fin.counterEdge === x)} onClick={() => set((f) => ({ ...f, counterEdge: x }))}>{x}</button>
           ))}
         </div>
@@ -97,6 +98,56 @@ export function FinishPanel({ design, catalog, apply }: { design: DesignData; ca
           ))}
         </div>
       </div>
+      {fin.sinkMount === "undermount" && (
+        <div className="field">
+          <span className="field-label">Undermount reveal (how the stone edge meets the bowl)</span>
+          <div className="chips">
+            {(["positive", "negative", "flush"] as const).map((x) => (
+              <button key={x} className={chip(fin.sink?.reveal === x)} onClick={() => setSink({ reveal: x })}>{x}</button>
+            ))}
+          </div>
+        </div>
+      )}
+      <h3 className="cat-title">Sink and faucet (for the countertop plan)</h3>
+      <p className="muted">From the sink and faucet spec sheets. What is left blank prints as &quot;per template&quot; for the fabricator.</p>
+      <label className="field">
+        <span className="field-label">Sink model</span>
+        <input className="input" value={fin.sink?.model ?? ""} onChange={(e) => setSink({ model: e.target.value })} />
+      </label>
+      <div className="field">
+        <span className="field-label">Sink cutout, width x depth (inches)</span>
+        <div className="chips">
+          <input className="input fin-size" inputMode="decimal" value={fin.sink?.cutout?.w ?? ""} placeholder="W"
+            onChange={(e) => setSink({ cutout: { w: Number(e.target.value) || 0, d: fin.sink?.cutout?.d ?? 0 } })} />
+          <span>x</span>
+          <input className="input fin-size" inputMode="decimal" value={fin.sink?.cutout?.d ?? ""} placeholder="D"
+            onChange={(e) => setSink({ cutout: { w: fin.sink?.cutout?.w ?? 0, d: Number(e.target.value) || 0 } })} />
+        </div>
+      </div>
+      <div className="field">
+        <span className="field-label">Faucet holes in the counter</span>
+        <div className="chips">
+          {[0, 1, 2, 3, 4].map((n) => (
+            <button key={n} className={chip((fin.sink?.faucetHoles ?? 0) === n)} onClick={() => setSink({ faucetHoles: n })}>{n === 0 ? "None" : n}</button>
+          ))}
+        </div>
+      </div>
+      {(fin.sink?.faucetHoles ?? 0) > 0 && (
+        <div className="grid2">
+          <label className="field">
+            <span className="field-label">Hole size (inches)</span>
+            <input className="input" inputMode="decimal" value={fin.sink?.holeSize ?? ""} placeholder="From the faucet sheet"
+              onChange={(e) => setSink({ holeSize: Number(e.target.value) || undefined })} />
+          </label>
+          {(fin.sink?.faucetHoles ?? 0) > 1 && (
+            <label className="field">
+              <span className="field-label">Spread, outer holes (inches)</span>
+              <input className="input" inputMode="decimal" value={fin.sink?.spread ?? ""} placeholder="For example 8"
+                onChange={(e) => setSink({ spread: Number(e.target.value) || undefined })} />
+            </label>
+          )}
+        </div>
+      )}
     </div>
   );
 }

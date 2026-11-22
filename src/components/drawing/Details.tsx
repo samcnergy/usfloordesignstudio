@@ -126,6 +126,9 @@ export function EdgeDetail({ scale, thickness, edge }: { scale: number; thicknes
       case "full bullnose": return `M 0 0 L ${front - t / 2} 0 A ${t / 2} ${t / 2} 0 0 1 ${front - t / 2} ${t} L 0 ${t} Z`;
       case "half bullnose": return `M 0 0 L ${front - t / 2} 0 A ${t / 2} ${t / 2} 0 0 1 ${front} ${t / 2} L ${front} ${t} L 0 ${t} Z`;
       case "1/4\" bevel": return `M 0 0 L ${front - 0.25} 0 L ${front} 0.25 L ${front} ${t} L 0 ${t} Z`;
+      case "square": return `M 0 0 L ${front} 0 L ${front} ${t} L 0 ${t} Z`;
+      // a built-up mitered drop edge, twice the slab thickness, the miter at 45 degrees
+      case "mitered": return `M 0 0 L ${front} 0 L ${front} ${t * 2} L ${front - t} ${t * 2} L ${front - t} ${t} L 0 ${t} Z`;
       case "ogee": return `M 0 0 L ${front - 0.5} 0 Q ${front} 0 ${front - 0.15} ${t * 0.45} Q ${front - 0.3} ${t * 0.75} ${front} ${t} L 0 ${t} Z`;
       default: return `M 0 0 L ${front - r * 0.3} 0 Q ${front} 0 ${front} ${r * 0.3} L ${front} ${t} L 0 ${t} Z`; // eased
     }
@@ -137,6 +140,7 @@ export function EdgeDetail({ scale, thickness, edge }: { scale: number; thicknes
       fontFamily="'Source Sans 3', Helvetica, Arial, sans-serif">
       {/* the slab */}
       <path d={shape} fill="#E6E6E6" stroke={INK} strokeWidth={0.06} />
+      {edge === "mitered" && <line x1={front - t} y1={t} x2={front} y2={0} stroke={INK} strokeWidth={0.04} />}
       {/* the case side and the door below it */}
       <rect x={-3} y={t} width={3 + 1 - 0.0} height={5} fill="none" stroke={INK} strokeWidth={0.05} />
       <rect x={1} y={t + 0.1} width={0.75} height={4.9} fill="#FFFFFF" stroke={INK} strokeWidth={0.05} />

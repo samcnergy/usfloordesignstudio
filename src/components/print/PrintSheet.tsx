@@ -17,7 +17,7 @@ import { ElevationView, elevationPaperSize } from "@/components/drawing/Elevatio
 import { PlanView, planBox, type ElevationMark } from "@/components/drawing/PlanView";
 import { View3D, DEFAULT_CAMERA } from "@/components/drawing/View3D";
 import { roomShape } from "@/lib/geometry";
-import { DROP_DOOR } from "@/lib/plan";
+import { COUNTER_STYLES, DROP_DOOR } from "@/lib/plan";
 import { needsDemoPlan, newOpeningKeys } from "@/lib/demo";
 import { CabinetSection, EdgeDetail, sectionRun } from "@/components/drawing/Details";
 import { GROUP_NAME, GROUP_ORDER, MEP_KINDS, TAG_MEANING, mepKey, mepOf, type MepItem, type MepSpec } from "@/lib/mep";
@@ -400,7 +400,50 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
     });
   }
 
-  // ---------- details: the typical cabinet section and the countertop edge ----------
+  // ---------- the countertop plan, with the edge detail beside it ----------
+  const hasCounters = design.items.some((i) => i.mountHeight === 0 && COUNTER_STYLES.has(i.style));
+  if (hasCounters) {
+    const fin = finishesOf(design);
+    const sink = fin.sink ?? {};
+    const ctScale =
+      SCALES.find((s) => {
+        const b = planBox(design, s.k * 0.12, 3);
+        return b.width / s.k <= planSpace.width && b.height / s.k <= planSpace.height;
+      }) ?? fitScale(box.width, box.height, planSpace);
+    const thick = counter?.thickness ?? 1.5;
+    const holes = sink.faucetHoles ?? 0;
+    const ctNotes = [
+      `Countertop: ${counter?.name ?? "as selected"}, ${fmtIn(thick)} thick, ${fin.counterEdge ?? "edge to be selected"} edge (detail 2). Overhang 1" past the cabinet door faces; 1" all round on an island.`,
+      "Counter depth is the cabinet depth plus the overhang, dimensioned at the end of each run. Note any change for inset or lipped doors before template.",
+      `Sink: ${sink.model || "model to be selected"}, ${fin.sinkMount ?? "mounting to be selected"}${fin.sinkMount === "undermount" && sink.reveal ? `, ${sink.reveal} reveal` : ""}. ${sink.cutout?.w && sink.cutout?.d ? `Cutout ${fmtIn(sink.cutout.w)} x ${fmtIn(sink.cutout.d)}, centered on the sink base${fin.sinkMount?.startsWith("farmhouse") ? ", through the front edge for the apron" : ", centered front to back"}; cut from the manufacturer's template.` : "Cutout per the sink manufacturer's template."}`,
+      holes > 0 ? `Faucet: ${holes} hole${holes > 1 ? "s" : ""}${sink.holeSize ? `, ${fmtIn(sink.holeSize)} diameter` : ", size per the faucet spec sheet"}${holes > 1 && sink.spread ? `, ${fmtIn(sink.spread)} spread center to center` : ""}, on the sink centerline behind the bowl.` : "Faucet holes: none drilled in the counter (deck or wall faucet per the plumbing plan), or as shown at template.",
+      "Ranges are not drawn; the clear opening between the counter edges is dimensioned at each one.",
+      "Seams placed by the fabricator for the slabs used, kept out of the sink and cooktop areas, and shown to the designer before cutting.",
+      "Fabricator templates after the cabinets are set and level; verify all sizes in the field.",
+    ];
+    add({
+      id: sheetId(5, 1), title: `${room} Countertop Plan`, scale: ctScale.label,
+      body: (
+        <div className="ds-plan">
+          <div className="ds-plan-draw">
+            <PlanView design={design} catalog={catalog} print={{ scale: ctScale.k }} counter={{ spec: fin.sink, mount: fin.sinkMount }}
+              room={{ name: room, ceiling: `CLG. HT. ${fmtIn(design.room.ceiling)}` }} />
+            <TitleMarker n={1} title={`${room.toUpperCase()} COUNTERTOP PLAN`} scale={ctScale.label} />
+          </div>
+          <aside className="ds-plan-side ds-mep-side" style={{ width: `${notesWidth}in` }}>
+            <div className="ds-north"><NorthArrow angle={northAngle(design)} /></div>
+            <h4>Plan notes</h4>
+            <ol>{ctNotes.map((n, i) => <li key={i}>{n}</li>)}</ol>
+            <h4>Edge detail</h4>
+            <EdgeDetail scale={4} thickness={thick} edge={fin.counterEdge ?? null} />
+            <TitleMarker n={2} title="COUNTERTOP EDGE DETAIL" scale={'3" = 1\'-0"'} />
+          </aside>
+        </div>
+      ),
+    });
+  }
+
+  // ---------- details: the typical cabinet section ----------
   const cut = sectionRun(design);
   if (cut) {
     const DETAIL_SCALES: Scale[] = [
@@ -413,18 +456,13 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
     const wallName = shape.walls.find((w) => w.id === cut.run)?.label;
     const secTitle = `TYPICAL CABINET SECTION${wallName ? ` AT ${wallName.toUpperCase()}` : ""}`;
     add({
-      id: sheetId(5, 1), title: "Details", scale: "As noted",
+      id: sheetId(5, 2), title: "Details", scale: secScale.label,
       body: (
         <div className="ds-details">
           <div className="ds-elev-cell">
             <CabinetSection design={design} scale={secScale.k} counter={counter ? { name: counter.name, thickness: counter.thickness ?? 1.5 } : null}
               splash={fin.uses.backsplash ? fkeys.backsplash ?? null : null} floorKey={fin.uses.floor ? fkeys.floor ?? null : null} />
             <TitleMarker n={1} title={secTitle} scale={secScale.label} />
-          </div>
-          <div className="ds-elev-cell">
-            <EdgeDetail scale={4} thickness={counter?.thickness ?? 1.5} edge={fin.counterEdge ?? null} />
-            <TitleMarker n={2} title="COUNTERTOP EDGE" scale={'3" = 1\'-0"'} />
-            <p className="ds-small">Countertop overhangs the door faces by 1&quot;. Fabricator confirms the edge, seams and cutouts at template.</p>
           </div>
         </div>
       ),

@@ -40,10 +40,25 @@ export interface FinishEntry {
   size?: { w: number; l: number };
 }
 
+/** The sink and faucet as the fabricator needs them for the countertop plan (sizes from the spec sheets). */
+export interface SinkSpec {
+  model?: string;
+  /** The cutout, W x D inches, from the sink's template or spec sheet. */
+  cutout?: { w: number; d: number };
+  /** Undermount: how the counter edge meets the bowl. */
+  reveal?: "positive" | "negative" | "flush";
+  faucetHoles?: number;
+  /** Hole diameter, inches. */
+  holeSize?: number;
+  /** Center to center of the outer holes on a widespread faucet, inches. */
+  spread?: number;
+}
+
 export interface FinishData {
   uses: Partial<Record<FinishUse, FinishEntry>>;
   counterEdge?: string;
   sinkMount?: string;
+  sink?: SinkSpec;
 }
 
 export const finishesOf = (d: DesignData): FinishData => ({ uses: {}, ...(d.finishes ?? {}) });
