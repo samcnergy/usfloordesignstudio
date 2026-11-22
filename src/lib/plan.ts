@@ -21,8 +21,8 @@ import { pointOn, roomShape, type RunFrame, type Vec } from "./geometry";
 /** Top of a standard base cabinet, without the countertop. */
 export const BASE_TOP = 34.5;
 
-/** Styles that get a countertop (kept in step with the front views). */
-export const COUNTER_STYLES = new Set(["base", "drawer_base", "sink_base", "blind_corner_base", "lazy_susan", "open_shelf", "vanity_combo", "dishwasher"]);
+/** Styles that get a countertop (kept in step with the front views). Base fillers count when they are base height. */
+export const COUNTER_STYLES = new Set(["base", "drawer_base", "sink_base", "blind_corner_base", "lazy_susan", "open_shelf", "vanity_combo", "dishwasher", "filler"]);
 
 /** Fixtures and equipment located by a centerline (sinks, cooking, ventilation, refrigeration). */
 export const CENTERLINE_STYLES = new Set(["sink_base", "vanity_combo", "range", "hood", "refrigerator", "dishwasher", "wall_microwave", "tall_oven"]);

@@ -60,6 +60,8 @@ export interface FinishData {
   counterEdge?: string;
   sinkMount?: string;
   sink?: SinkSpec;
+  /** The usable slab size, length x width in inches, from the fabricator or the material's spec sheet. */
+  slab?: { l: number; w: number };
 }
 
 export const finishesOf = (d: DesignData): FinishData => ({ uses: {}, ...(d.finishes ?? {}) });

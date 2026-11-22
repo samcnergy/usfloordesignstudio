@@ -17,7 +17,7 @@ import { MepLayer } from "./MepSymbols";
 import { BacksplashTags, FinishCross, FloorPattern } from "./FinishSymbols";
 import type { FinishData, FinishUse } from "@/lib/finishes";
 import { blockingSpans } from "@/lib/demo";
-import { counterRuns, rangeOpenings, sinkCuts } from "@/lib/countertop";
+import { counterLayout, counterRuns, rangeOpenings, sinkCuts } from "@/lib/countertop";
 import { soffitQuad, soffitsOf } from "@/lib/soffit";
 import type { SinkSpec } from "@/lib/finishes";
 import { MEP_KINDS, type MepItem } from "@/lib/mep";
@@ -148,7 +148,7 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
   /** The demolition and construction plan: wall status, new openings with their keys, wall blocking; no cabinets. */
   demo?: { keys: Map<string, string> };
   /** The countertop plan: work surfaces, sink cutouts and faucet holes, range openings; cabinets very light, no appliances. */
-  counter?: { spec?: SinkSpec; mount?: string };
+  counter?: { spec?: SinkSpec; mount?: string; slab?: { l: number; w: number } };
   /** The cutting plane of the cabinet section: across the counter at `s` along the run, looking along the run. */
   cut?: { run: string; s: number; n: number; sheet: string };
   /** The soffit plan: soffits in solid lines and dimensioned, cabinets light; elsewhere soffits show as overhead dashed lines. */
@@ -479,6 +479,19 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
               </g>
             );
           })}
+          {/* seams: a heavy line across the top where pieces meet, labeled */}
+          {counter.slab && counterLayout(design, frames, counter.slab).seams.map((sm, i) => {
+            const f = frames.get(sm.run)!;
+            const a = pointOn(f, sm.s, sm.t0);
+            const b = pointOn(f, sm.s, sm.t1);
+            const lab = pointOn(f, sm.s, sm.t1 + fs * 1.1);
+            return (
+              <g key={`seam-${i}`}>
+                <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#000000" strokeWidth={0.9} />
+                <text x={lab.x} y={lab.y + fs * 0.3} fontSize={fs * 0.7} textAnchor="middle" fontWeight={700} stroke="#FFFFFF" strokeWidth={fs * 0.2} paintOrder="stroke">{sm.warn ? "SEAM*" : "SEAM"}</text>
+              </g>
+            );
+          })}
           {/* the clear opening between the counters at each range */}
           {shape.walls.flatMap((w) => rangeOpenings(design, w.id).map((r, i) => (
             <g key={`rng-${w.id}-${i}`}>
@@ -609,8 +622,10 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
                 d += step;
               }
               const spans = counterRuns(design, w.id);
+              // with the slab size known, the counter string also gives each piece's length
+              const seamStops = counter.slab ? counterLayout(design, frames, counter.slab).seams.filter((sm) => sm.run === w.id).map((sm) => sm.s) : [];
               if (spans.length) {
-                tiers.push(<DimChain key="ctr" origin={w.origin} u={w.u} o={o} d={d} stops={[0, ...spans.flat(), w.length]} fs={fs * 0.8} from={t} />);
+                tiers.push(<DimChain key="ctr" origin={w.origin} u={w.u} o={o} d={d} stops={[0, ...spans.flat(), ...seamStops, w.length]} fs={fs * 0.8} from={t} />);
                 d += step;
               }
               tiers.push(<DimChain key="all" origin={w.origin} u={w.u} o={o} d={d} stops={[0, w.length]} fs={fs * 0.8} from={t} />);

@@ -108,6 +108,18 @@ export function FinishPanel({ design, catalog, apply }: { design: DesignData; ca
           </div>
         </div>
       )}
+      <h3 className="cat-title">Countertop slab (for the seam layout)</h3>
+      <p className="muted">The usable slab size from the fabricator or the material&apos;s spec sheet. With it, the countertop plan shows where the seams go and lists the pieces.</p>
+      <div className="field">
+        <span className="field-label">Slab length x width (inches)</span>
+        <div className="chips">
+          <input className="input fin-size" inputMode="decimal" value={fin.slab?.l ?? ""} placeholder="L"
+            onChange={(e) => set((f) => ({ ...f, slab: { l: Number(e.target.value) || 0, w: f.slab?.w ?? 0 } }))} />
+          <span>x</span>
+          <input className="input fin-size" inputMode="decimal" value={fin.slab?.w ?? ""} placeholder="W"
+            onChange={(e) => set((f) => ({ ...f, slab: { l: f.slab?.l ?? 0, w: Number(e.target.value) || 0 } }))} />
+        </div>
+      </div>
       <h3 className="cat-title">Sink and faucet (for the countertop plan)</h3>
       <p className="muted">From the sink and faucet spec sheets. What is left blank prints as &quot;per template&quot; for the fabricator.</p>
       <label className="field">

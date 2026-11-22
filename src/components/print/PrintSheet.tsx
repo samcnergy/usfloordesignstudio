@@ -14,10 +14,10 @@
 
 import { Brand } from "@/components/Brand";
 import { ElevationView, elevationPaperSize, type ElevationRefs } from "@/components/drawing/ElevationView";
-import { counterRuns } from "@/lib/countertop";
+import { counterLayout, counterRuns } from "@/lib/countertop";
 import { PlanView, planBox, type ElevationMark } from "@/components/drawing/PlanView";
 import { View3D, DEFAULT_CAMERA } from "@/components/drawing/View3D";
-import { roomShape } from "@/lib/geometry";
+import { allFrames, roomShape } from "@/lib/geometry";
 import { BASE_TOP, COUNTER_STYLES, DROP_DOOR } from "@/lib/plan";
 import { needsDemoPlan, newOpeningKeys } from "@/lib/demo";
 import { CabinetSection, EdgeDetail, sectionRun } from "@/components/drawing/Details";
@@ -110,7 +110,7 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
   // elevation and its cutting plane on the floor plan. The countertop edge (ID-5.01, drawing 2) is marked
   // on the same elevation, around the counter edge.
   const cut = sectionRun(design);
-  const hasCounters = design.items.some((i) => i.mountHeight === 0 && COUNTER_STYLES.has(i.style));
+  const hasCounters = design.items.some((i) => i.mountHeight === 0 && COUNTER_STYLES.has(i.style) && Math.abs(i.height - BASE_TOP) < 0.01);
   const ctSheet = sheetId(5, 1);
   const secSheet = sheetId(5, 2);
   const counterThick = (catalog.countertops.find((c) => c.id === design.countertopId) ?? catalog.countertops[0])?.thickness ?? 1.5;
@@ -440,13 +440,20 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
       }) ?? fitScale(box.width, box.height, planSpace);
     const thick = counter?.thickness ?? 1.5;
     const holes = sink.faucetHoles ?? 0;
+    const slab = fin.slab && fin.slab.l > 0 && fin.slab.w > 0 ? fin.slab : undefined;
+    const layout = slab ? counterLayout(design, new Map(allFrames(design).map((f) => [f.id, f])), slab) : null;
     const ctNotes = [
       `Countertop: ${counter?.name ?? "as selected"}, ${fmtIn(thick)} thick, ${fin.counterEdge ?? "edge to be selected"} edge (detail 2). Overhang 1" past the cabinet door faces; 1" all round on an island.`,
       "Counter depth is the cabinet depth plus the overhang, dimensioned at the end of each run. Note any change for inset or lipped doors before template.",
       `Sink: ${sink.model || "model to be selected"}, ${fin.sinkMount ?? "mounting to be selected"}${fin.sinkMount === "undermount" && sink.reveal ? `, ${sink.reveal} reveal` : ""}. ${sink.cutout?.w && sink.cutout?.d ? `Cutout ${fmtIn(sink.cutout.w)} x ${fmtIn(sink.cutout.d)}, centered on the sink base${fin.sinkMount?.startsWith("farmhouse") ? ", through the front edge for the apron" : ", centered front to back"}; cut from the manufacturer's template.` : "Cutout per the sink manufacturer's template."}`,
       holes > 0 ? `Faucet: ${holes} hole${holes > 1 ? "s" : ""}${sink.holeSize ? `, ${fmtIn(sink.holeSize)} diameter` : ", size per the faucet spec sheet"}${holes > 1 && sink.spread ? `, ${fmtIn(sink.spread)} spread center to center` : ""}, on the sink centerline behind the bowl.` : "Faucet holes: none drilled in the counter (deck or wall faucet per the plumbing plan), or as shown at template.",
       "Ranges are not drawn; the clear opening between the counter edges is dimensioned at each one.",
-      "Seams placed by the fabricator for the slabs used, kept out of the sink and cooktop areas, and shown to the designer before cutting.",
+      ...(layout
+        ? [
+          `Seams as shown for a ${fmtIn(slab!.l)} x ${fmtIn(slab!.w)} usable slab: ${layout.pieces.length} piece${layout.pieces.length === 1 ? "" : "s"}, seams at the corners and over cabinet joints, none at the sink or over the dishwasher. Fabricator confirms with the slabs chosen before cutting.`,
+          ...layout.warnings.map((w) => `* ${w}`),
+        ]
+        : ["Seams placed by the fabricator for the slabs used, kept out of the sink and cooktop areas, and shown to the designer before cutting. (Type the slab size on the Finishes tab to lay them out here.)"]),
       "Fabricator templates after the cabinets are set and level; verify all sizes in the field.",
     ];
     add({
@@ -454,7 +461,7 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
       body: (
         <div className="ds-plan">
           <div className="ds-plan-draw">
-            <PlanView design={design} catalog={catalog} print={{ scale: ctScale.k }} counter={{ spec: fin.sink, mount: fin.sinkMount }}
+            <PlanView design={design} catalog={catalog} print={{ scale: ctScale.k }} counter={{ spec: fin.sink, mount: fin.sinkMount, slab }}
               room={{ name: room, ceiling: `CLG. HT. ${fmtIn(design.room.ceiling)}` }} />
             <TitleMarker n={1} title={`${room.toUpperCase()} COUNTERTOP PLAN`} scale={ctScale.label} />
           </div>
@@ -462,6 +469,17 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
             <div className="ds-north"><NorthArrow angle={northAngle(design)} /></div>
             <h4>Plan notes</h4>
             <ol>{ctNotes.map((n, i) => <li key={i}>{n}</li>)}</ol>
+            {layout && (
+              <>
+                <h4>Countertop pieces</h4>
+                <table className="ds-table ds-table-tight">
+                  <thead><tr><th>Piece</th><th>Where</th><th>Length x depth</th></tr></thead>
+                  <tbody>{layout.pieces.map((p, i) => (
+                    <tr key={i}><td>{i + 1}</td><td>{shape.walls.find((w) => w.id === p.run)?.label ?? design.islands.find((x) => x.id === p.run)?.name ?? ""}</td><td className="tabular">{fmtIn(p.s1 - p.s0)} x {fmtIn(p.t1 - p.t0)}</td></tr>
+                  ))}</tbody>
+                </table>
+              </>
+            )}
             <h4>Edge detail</h4>
             <EdgeDetail scale={4} thickness={thick} edge={fin.counterEdge ?? null} />
             <TitleMarker n={2} sheetRef={refSheet} title="COUNTERTOP EDGE DETAIL" scale={'3" = 1\'-0"'} />
