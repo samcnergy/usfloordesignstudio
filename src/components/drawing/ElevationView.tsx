@@ -10,7 +10,7 @@ import { atTop, cabinetTop } from "@/lib/place";
 import { fmtIn } from "@/lib/units";
 import { CabinetFront } from "./CabinetFront";
 import { DimH, DimV } from "./dims";
-import { PaintDefs, PROBLEM, SELECT, counterPaint, finishPaint } from "./paint";
+import { PaintDefs, PROBLEM, SELECT, counterPaint, finishPaint, monoPaint } from "./paint";
 
 // "turn" is the grip behind a free standing run in the top view; its id is the run's.
 export type DrawTarget = { kind: "item" | "opening" | "island" | "wall" | "turn"; id: string };
@@ -25,6 +25,11 @@ export interface ViewProps {
   onTargetDown?: (e: ReactPointerEvent<SVGElement>, target: DrawTarget) => void;
   onBackgroundDown?: (e: ReactPointerEvent<SVGSVGElement>) => void;
   className?: string;
+  /**
+   * The printed drawing set: drawn to scale (real inches per paper inch), black
+   * and white, with plotted lettering about 1/8" high (K&B drawing standards).
+   */
+  print?: { scale: number };
 }
 
 export const COUNTER_STYLES = new Set(["base", "drawer_base", "sink_base", "blind_corner_base", "lazy_susan", "open_shelf", "vanity_combo", "dishwasher"]);
@@ -46,7 +51,7 @@ export function counterRuns(items: PlacedItem[]): [number, number][] {
   return mergeSpans(items.filter((i) => COUNTER_STYLES.has(i.style) && i.mountHeight === 0 && Math.abs(i.height - BASE_TOP) < 0.01));
 }
 
-export function OpeningFront({ op, Y }: { op: Opening; Y: (z: number) => number }) {
+export function OpeningFront({ op, Y, mono = false }: { op: Opening; Y: (z: number) => number; mono?: boolean }) {
   const x = op.offset;
   const w = op.width;
   const casing = 2.5;
@@ -56,7 +61,7 @@ export function OpeningFront({ op, Y }: { op: Opening; Y: (z: number) => number 
     return (
       <g>
         <rect x={x - casing} y={Y(z1 + casing)} width={w + casing * 2} height={op.height + casing * 2} fill="#FFFFFF" stroke="#8A8D90" strokeWidth={0.3} />
-        <rect x={x} y={Y(z1)} width={w} height={op.height} fill="#DCE7EC" stroke="#5E6266" strokeWidth={0.35} />
+        <rect x={x} y={Y(z1)} width={w} height={op.height} fill={mono ? "#FFFFFF" : "#DCE7EC"} stroke="#5E6266" strokeWidth={0.35} />
         {w > 30 && <line x1={x + w / 2} x2={x + w / 2} y1={Y(z1)} y2={Y(z0)} stroke="#5E6266" strokeWidth={0.6} />}
         <line x1={x} x2={x + w} y1={Y(z0 + op.height / 2)} y2={Y(z0 + op.height / 2)} stroke="#5E6266" strokeWidth={0.4} />
       </g>
@@ -72,7 +77,7 @@ export function OpeningFront({ op, Y }: { op: Opening; Y: (z: number) => number 
           stroke="#8A8D90"
           strokeWidth={0.3}
         />
-        <rect x={x} y={Y(op.height)} width={w} height={op.height} fill="#F4F2EC" stroke="#5E6266" strokeWidth={0.35} />
+        <rect x={x} y={Y(op.height)} width={w} height={op.height} fill={mono ? "#FFFFFF" : "#F4F2EC"} stroke="#5E6266" strokeWidth={0.35} />
         <rect x={x + 4} y={Y(op.height - 4)} width={w - 8} height={op.height * 0.42} fill="none" stroke="#9A9DA0" strokeWidth={0.25} />
         <rect x={x + 4} y={Y(op.height * 0.48)} width={w - 8} height={op.height * 0.48 - 4} fill="none" stroke="#9A9DA0" strokeWidth={0.25} />
         <circle cx={knobX} cy={Y(36)} r={1.1} fill="#6A6E72" />
@@ -117,32 +122,23 @@ function Faucet({ cx, Y }: { cx: number; Y: (z: number) => number }) {
   );
 }
 
-export function ElevationView({ design, catalog, run, selectedId, selectedIds, problemIds, onTargetDown, onBackgroundDown, className }: ViewProps & { run: string }) {
+/**
+ * The front view's frame: its length and height, the lettering size, the label
+ * rows and the margins they need. The view draws from it, and the drawing set
+ * uses it to know a front view's printed size before laying out a sheet.
+ */
+export function elevationLayout(design: DesignData, run: string, fsOverride?: number) {
   const frame = runFrame(design, run);
   if (!frame) return null;
   const L = frame.length;
   const island = frame.kind === "island";
-  const open = !!frame.open;
   const islandTop = design.items.filter((i) => i.run === run).reduce((m, i) => Math.max(m, i.mountHeight + i.height), 0);
   // islands are drawn without a wall behind them, so the view only needs to clear the tallest piece
   const H = island ? Math.max(48, Math.ceil(islandTop + 8)) : design.room.ceiling;
-  const fs = Math.max(2.4, Math.min(4.2, Math.max(L, H) / 52));
-  const Y = (z: number) => H - z;
-
+  const fs = fsOverride ?? Math.max(2.4, Math.min(4.2, Math.max(L, H) / 52));
   const items = design.items.filter((i) => i.run === run);
-  const openings = isWall(design.room, run) ? design.openings.filter((o) => o.wall === run) : [];
   const lower = items.filter((i) => i.mountHeight === 0).sort((a, b) => a.offset - b.offset);
   const upper = items.filter((i) => i.mountHeight > 0).sort((a, b) => a.offset - b.offset);
-  const counter = counterPaint(catalog, design);
-  const counterThick = catalog.countertops.find((c) => c.id === design.countertopId)?.thickness ?? 1.5;
-  const runs = counterRuns(items);
-  // crown molding, drawn as a band on top of the wall cabinets that run to the top
-  const crown = Math.max(0, design.crown ?? 0);
-  const crownTop = cabinetTop(design);
-  const crowned = items.filter((i) => atTop(design, i, crownTop));
-  const crownRuns = crown > 0 ? mergeSpans(crowned) : [];
-  const crownPaint = crowned.length ? finishPaint(catalog, design, crowned[0]) : null;
-
   // labels first: the rows they need decide how much room the margins have to leave
   const labelSize = fs * 0.8;
   const lowerLabels = labelRows(lower, labelSize);
@@ -153,7 +149,36 @@ export function ElevationView({ design, catalog, run, selectedId, selectedIds, p
   const ML = fs * 6.5;
   const MR = fs * 2;
   const MT = fs * 5 + upperExtra;
-  const MB = fs * 9 + lowerExtra;
+  // the printed set puts the title under the drawing, outside it, so no room is kept for one
+  const MB = fs * (fsOverride ? 8 : 9) + lowerExtra;
+  return { frame, L, island, H, fs, items, lower, upper, labelSize, lowerLabels, upperLabels, labelStep, lowerExtra, upperExtra, ML, MR, MT, MB };
+}
+
+/** A front view's printed size, in paper inches, at this scale. */
+export function elevationPaperSize(design: DesignData, run: string, scale: number, fs: number): { width: number; height: number } | null {
+  const g = elevationLayout(design, run, fs);
+  if (!g) return null;
+  return { width: (g.L + g.ML + g.MR) / scale, height: (g.H + g.MT + g.MB) / scale };
+}
+
+export function ElevationView({ design, catalog, run, selectedId, selectedIds, problemIds, onTargetDown, onBackgroundDown, className, print }: ViewProps & { run: string }) {
+  const g = elevationLayout(design, run, print ? print.scale * 0.13 : undefined);
+  if (!g) return null;
+  const { frame, L, island, H, fs, items, lower, upper, labelSize, lowerLabels, upperLabels, labelStep, lowerExtra, upperExtra, ML, MR, MT, MB } = g;
+  const open = !!frame.open;
+  const mono = !!print;
+  const Y = (z: number) => H - z;
+
+  const openings = isWall(design.room, run) ? design.openings.filter((o) => o.wall === run) : [];
+  const counter = mono ? monoPaint(counterPaint(catalog, design)) : counterPaint(catalog, design);
+  const counterThick = catalog.countertops.find((c) => c.id === design.countertopId)?.thickness ?? 1.5;
+  const runs = counterRuns(items);
+  // crown molding, drawn as a band on top of the wall cabinets that run to the top
+  const crown = Math.max(0, design.crown ?? 0);
+  const crownTop = cabinetTop(design);
+  const crowned = items.filter((i) => atTop(design, i, crownTop));
+  const crownRuns = crown > 0 ? mergeSpans(crowned) : [];
+  const crownPaint = crowned.length ? (mono ? monoPaint(finishPaint(catalog, design, crowned[0])) : finishPaint(catalog, design, crowned[0])) : null;
 
   // height marks for the left dimension string
   const marks = new Set<number>(island ? [0] : [0, H]);
@@ -180,7 +205,7 @@ export function ElevationView({ design, catalog, run, selectedId, selectedIds, p
   };
 
   const drawItem = (it: PlacedItem) => {
-    const paint = finishPaint(catalog, design, it);
+    const paint = mono ? monoPaint(finishPaint(catalog, design, it)) : finishPaint(catalog, design, it);
     const selected = selectedIds ? selectedIds.has(it.id) : selectedId === it.id;
     const problem = problemIds?.has(it.id);
     return (
@@ -209,14 +234,16 @@ export function ElevationView({ design, catalog, run, selectedId, selectedIds, p
       xmlns="http://www.w3.org/2000/svg"
       fontFamily="'Source Sans 3', Helvetica, Arial, sans-serif"
       onPointerDown={(e) => onBackgroundDown?.(e)}
-      style={{ touchAction: "none", userSelect: "none" }}
+      style={print
+        ? { width: `${(L + ML + MR) / print.scale}in`, height: `${(H + MT + MB) / print.scale}in`, display: "block" }
+        : { touchAction: "none", userSelect: "none" }}
     >
       <PaintDefs catalog={catalog} />
-      {!island && <rect x={0} y={0} width={L} height={H} fill={open ? "none" : "#FBFAF7"} stroke="#B9BBBD" strokeWidth={0.3} strokeDasharray={open ? "2 1.5" : undefined} />}
+      {!island && <rect x={0} y={0} width={L} height={H} fill={open ? "none" : mono ? "#FFFFFF" : "#FBFAF7"} stroke="#B9BBBD" strokeWidth={0.3} strokeDasharray={open ? "2 1.5" : undefined} />}
 
       {openings.map((op) => (
         <g key={op.id} onPointerDown={down({ kind: "opening", id: op.id })} style={{ cursor: onTargetDown ? "grab" : undefined }}>
-          <OpeningFront op={op} Y={Y} />
+          <OpeningFront op={op} Y={Y} mono={mono} />
           {((selectedIds ? selectedIds.has(op.id) : selectedId === op.id) || problemIds?.has(op.id)) && (
             <rect
               x={op.offset - 0.5}
@@ -287,9 +314,11 @@ export function ElevationView({ design, catalog, run, selectedId, selectedIds, p
       ))}
       {!island && <DimV y0={Y(0)} y1={Y(H)} x={-fs * 4.6} fs={fs * 0.85} />}
 
-      <text x={0} y={H + MB - fs * 0.3} fontSize={fs} textAnchor="start" fill="#1A1D1F" fontWeight={700} letterSpacing={fs * 0.08}>
-        {open ? `${frame.label.toUpperCase()} (OPEN)` : frame.label.toUpperCase()}
-      </text>
+      {print ? null : (
+        <text x={0} y={H + MB - fs * 0.3} fontSize={fs} textAnchor="start" fill="#1A1D1F" fontWeight={700} letterSpacing={fs * 0.08}>
+          {open ? `${frame.label.toUpperCase()} (OPEN)` : frame.label.toUpperCase()}
+        </text>
+      )}
     </svg>
   );
 }

@@ -219,6 +219,12 @@ export interface DesignData {
   extras: ExtraItem[];
   // The 3D view: how it is turned and tilted, and line drawing or color. Printed as set.
   view3d?: { turn: number; tilt: number; look: "line" | "color" };
+  // For the drawing set (K&B drawing standards): the room's name on the plan and
+  // in the elevation titles ("KITCHEN"), and the wall that faces north. Elevations
+  // start at the north wall and go clockwise; the north arrow points at it.
+  // Missing: "Kitchen" and Wall A.
+  roomName?: string;
+  northWall?: string | null;
 }
 
 export interface DesignRecord {

@@ -9,7 +9,7 @@ import { allFrames, islandDepth, islandFrame, islandRect, itemLabel, itemQuad, p
 import { fmtFtIn, fmtIn } from "@/lib/units";
 import { DimAligned } from "./dims";
 import type { DrawTarget, ViewProps } from "./ElevationView";
-import { PROBLEM, PaintDefs, SELECT, finishPaint } from "./paint";
+import { PROBLEM, PaintDefs, SELECT, finishPaint, monoPaint } from "./paint";
 
 function OpeningPlan({ op, frame, t }: { op: Opening; frame: RunFrame; t: number }) {
   const s0 = op.offset;
@@ -59,13 +59,28 @@ function TurnHandle({ design, run, fs, onDown, live }: { design: DesignData; run
   );
 }
 
-export function PlanView({ design, catalog, selectedId, selectedIds, problemIds, onTargetDown, onBackgroundDown, className, selectedRun, box }: ViewProps & { selectedRun?: string | null; box?: { x0: number; y0: number; x1: number; y1: number } | null }) {
+/** The top view's drawing frame in real inches, with room around the walls for dimensions and tags. */
+export function planBox(design: DesignData, fs?: number): { x: number; y: number; width: number; height: number; fs: number } {
+  const B = roomShape(design.room).bounds;
+  const f = fs ?? Math.max(3, Math.min(6, Math.max(B.x1 - B.x0, B.y1 - B.y0) / 38));
+  const M = f * 6;
+  return { x: B.x0 - M, y: B.y0 - M, width: B.x1 - B.x0 + 2 * M, height: B.y1 - B.y0 + 2 * M, fs: f };
+}
+
+/** Elevation markers for the printed plan: which wall each looks at and its number (north wall first, clockwise). */
+export type ElevationMark = { wallId: string; n: number };
+
+export function PlanView({ design, catalog, selectedId, selectedIds, problemIds, onTargetDown, onBackgroundDown, className, selectedRun, box, print, marks, room }: ViewProps & {
+  selectedRun?: string | null; box?: { x0: number; y0: number; x1: number; y1: number } | null;
+  /** On the printed plan: the elevation markers and the room's name and ceiling height. */
+  marks?: ElevationMark[]; room?: { name: string; ceiling: string };
+}) {
   const isSelected = (id: string) => (selectedIds ? selectedIds.has(id) : selectedId === id);
   const t = design.room.wallThickness;
   const shape = roomShape(design.room);
-  const B = shape.bounds;
-  const fs = Math.max(3, Math.min(6, Math.max(B.x1 - B.x0, B.y1 - B.y0) / 38));
-  const M = fs * 6;
+  const frameBox = planBox(design, print ? print.scale * 0.12 : undefined);
+  const fs = frameBox.fs;
+  const mono = !!print;
   const frames = new Map(allFrames(design).map((f) => [f.id, f]));
 
   const down = (target: DrawTarget) => (e: ReactPointerEvent<SVGElement>) => {
@@ -85,7 +100,7 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
     const frame = frames.get(it.run);
     if (!frame) return null;
     const quad = itemQuad(it, frame);
-    const paint = finishPaint(catalog, design, it);
+    const paint = mono ? monoPaint(finishPaint(catalog, design, it)) : finishPaint(catalog, design, it);
     const selected = isSelected(it.id);
     const problem = problemIds?.has(it.id);
     const f0 = pointOn(frame, it.offset, it.depth);
@@ -123,15 +138,40 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
 
   const floor = pointsAttr(shape.inner);
   const wallColor = (id: string) => (selectedRun === id ? "#5A4A1E" : "#33363A");
+  /**
+   * Where each elevation marker sits: inside the room, just past the base cabinets along the middle of its
+   * wall; a marker that would touch one placed before it slides along its wall until it is clear.
+   */
+  const markerCenters = new Map<string, { x: number; y: number }>();
+  if (print) {
+    const r = print.scale * 0.3125;
+    for (const m of marks ?? []) {
+      const w = shape.walls.find((x) => x.id === m.wallId);
+      if (!w) continue;
+      const depth = Math.max(0, ...design.items.filter((i) => i.run === w.id && i.mountHeight === 0).map((i) => i.depth));
+      const at = (s: number) => pointOn(w, s, depth + r * 1.6);
+      const clear = (p: { x: number; y: number }) => [...markerCenters.values()].every((c) => Math.hypot(c.x - p.x, c.y - p.y) >= r * 2.4);
+      let best = at(w.length / 2);
+      for (let step = 1; !clear(best) && step < 40; step++) {
+        const shift = Math.ceil(step / 2) * r * 0.5 * (step % 2 ? 1 : -1);
+        const s0 = w.length / 2 + shift;
+        if (s0 > r && s0 < w.length - r) best = at(s0);
+      }
+      markerCenters.set(w.id, best);
+    }
+  }
+  const markerCenter = (wallId: string) => markerCenters.get(wallId) ?? null;
 
   return (
     <svg
       className={className}
-      viewBox={`${B.x0 - M} ${B.y0 - M} ${B.x1 - B.x0 + 2 * M} ${B.y1 - B.y0 + 2 * M}`}
+      viewBox={`${frameBox.x} ${frameBox.y} ${frameBox.width} ${frameBox.height}`}
       xmlns="http://www.w3.org/2000/svg"
       fontFamily="'Source Sans 3', Helvetica, Arial, sans-serif"
       onPointerDown={(e) => onBackgroundDown?.(e)}
-      style={{ touchAction: "none", userSelect: "none" }}
+      style={print
+        ? { width: `${frameBox.width / print.scale}in`, height: `${frameBox.height / print.scale}in`, display: "block" }
+        : { touchAction: "none", userSelect: "none" }}
     >
       <PaintDefs catalog={catalog} />
       <defs>
@@ -140,7 +180,7 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
         </pattern>
       </defs>
       <polygon points={floor} fill="#FFFFFF" />
-      <polygon points={floor} fill="url(#floorgrid)" />
+      {mono ? null : <polygon points={floor} fill="url(#floorgrid)" />}
 
       {shape.walls.map((w) => {
         const band = pointsAttr([w.origin, w.end, w.outerEnd, w.outerStart]);
@@ -205,16 +245,58 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
         const on = selectedRun === w.id;
         return (
           <g key={`tag-${w.id}`}>
-            <DimAligned p0={w.origin} p1={w.end} o={{ x: -w.n.x, y: -w.n.y }} d={t + fs * 1.4} fs={fs * 0.8} label={`${fmtIn(w.length)}  (${fmtFtIn(w.length)})`} />
-            <g onPointerDown={down({ kind: "wall", id: w.id })} style={{ cursor: onTargetDown ? "pointer" : undefined }}>
-              <circle cx={mid.x} cy={mid.y} r={fs * 1.05} fill={on ? "#D03238" : "#FFFFFF"} stroke="#1A1D1F" strokeWidth={0.4} strokeDasharray={w.open ? "1.2 0.8" : undefined} />
-              <text x={mid.x} y={mid.y + fs * 0.36} fontSize={fs} textAnchor="middle" fontWeight={700} fill={on ? "#FFFFFF" : "#1A1D1F"}>
-                {w.letter}
-              </text>
-            </g>
+            {/* one unit on a drawing: inches and fractions on the printed plan (K&B drawing standards) */}
+            <DimAligned p0={w.origin} p1={w.end} o={{ x: -w.n.x, y: -w.n.y }} d={t + fs * 1.4} fs={fs * 0.8} label={print ? fmtIn(w.length) : `${fmtIn(w.length)}  (${fmtFtIn(w.length)})`} />
+            {print ? null : (
+              <g onPointerDown={down({ kind: "wall", id: w.id })} style={{ cursor: onTargetDown ? "pointer" : undefined }}>
+                <circle cx={mid.x} cy={mid.y} r={fs * 1.05} fill={on ? "#D03238" : "#FFFFFF"} stroke="#1A1D1F" strokeWidth={0.4} strokeDasharray={w.open ? "1.2 0.8" : undefined} />
+                <text x={mid.x} y={mid.y + fs * 0.36} fontSize={fs} textAnchor="middle" fontWeight={700} fill={on ? "#FFFFFF" : "#1A1D1F"}>
+                  {w.letter}
+                </text>
+              </g>
+            )}
           </g>
         );
       })}
+      {print && marks?.map((m) => {
+        if (!markerCenter(m.wallId)) return null;
+        // Elevation marker: a 5/8" circle with a filled arrow pointing at the wall it looks at, numbered from the north wall clockwise.
+        const w = shape.walls.find((x) => x.id === m.wallId);
+        if (!w) return null;
+        const r = print.scale * 0.3125;
+        const c = markerCenter(w.id)!;
+        const tip = { x: c.x - w.n.x * r * 1.9, y: c.y - w.n.y * r * 1.9 };
+        const side = { x: w.u.x * r * 0.75, y: w.u.y * r * 0.75 };
+        const baseC = { x: c.x - w.n.x * r * 0.55, y: c.y - w.n.y * r * 0.55 };
+        return (
+          <g key={`mark-${m.wallId}`}>
+            <polygon points={pointsAttr([tip, { x: baseC.x + side.x, y: baseC.y + side.y }, { x: baseC.x - side.x, y: baseC.y - side.y }])} fill="#1A1D1F" />
+            <circle cx={c.x} cy={c.y} r={r} fill="#FFFFFF" stroke="#1A1D1F" strokeWidth={0.6} />
+            <text x={c.x} y={c.y + r * 0.36} fontSize={r * 1.05} textAnchor="middle" fontWeight={700} fill="#1A1D1F">
+              {m.n}
+            </text>
+          </g>
+        );
+      })}
+      {print && room && (() => {
+        // Room name and ceiling height, near the middle of the floor and clear of the elevation markers.
+        const pts = shape.inner;
+        const mx = pts.reduce((n, p) => n + p.x, 0) / Math.max(1, pts.length);
+        const my = pts.reduce((n, p) => n + p.y, 0) / Math.max(1, pts.length);
+        const B = shape.bounds;
+        const centers = (marks ?? []).map((m) => markerCenter(m.wallId)).filter((c): c is { x: number; y: number } => !!c);
+        const options = [0, 0.18, -0.18, 0.3, -0.3].flatMap((fy) => [0, 0.2, -0.2].map((fx) => ({ x: mx + fx * (B.x1 - B.x0), y: my + fy * (B.y1 - B.y0) })));
+        const clear = (p: { x: number; y: number }) => Math.min(Infinity, ...centers.map((c) => Math.hypot(c.x - p.x, c.y - p.y)));
+        const best = options.reduce((a, b) => (clear(b) > clear(a) + 0.01 ? b : a), options[0]);
+        const cx = best.x;
+        const cy = best.y;
+        return (
+          <g>
+            <text x={cx} y={cy} fontSize={fs * 1.25} textAnchor="middle" fontWeight={700} fill="#1A1D1F" letterSpacing={fs * 0.06}>{room.name.toUpperCase()}</text>
+            <text x={cx} y={cy + fs * 1.5} fontSize={fs} textAnchor="middle" fill="#1A1D1F">{room.ceiling}</text>
+          </g>
+        );
+      })()}
       {box && (
         <rect
           x={Math.min(box.x0, box.x1)}

@@ -43,6 +43,9 @@ export function finishFor(catalog: Catalog, design: DesignData, item: Pick<Place
   return catalog.finishes.find((f) => f.line_id === lineId) ?? catalog.finishes[0];
 }
 
+/** A line drawing for the printed set: white faces, black lines (construction drawings are black and white). */
+export const monoPaint = (p: Paint): Paint => ({ ...p, color: "#FFFFFF", fill: "#FFFFFF", ink: LINE });
+
 export function finishPaint(catalog: Catalog, design: DesignData, item: PlacedItem): Paint {
   if (isAppliance(item)) return { color: STAINLESS, fill: STAINLESS, ink: LINE, doorStyle: "slab" };
   const finish = finishFor(catalog, design, item);

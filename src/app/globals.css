@@ -196,7 +196,8 @@ textarea.input { resize: vertical; }
 /* ---------- print sheet ---------- */
 .print-only { display: none; }
 @media print {
-  @page { size: letter landscape; margin: 0.35in; }
+  /* the drawing set is 11x17 by default; PrintSheet sets the size it was asked for */
+  @page { size: 17in 11in; margin: 0; }
   html, body { background: #fff !important; height: auto; }
   .no-print { display: none !important; }
   .editor { height: auto; overflow: visible; display: block; }
@@ -328,3 +329,57 @@ textarea.input { resize: vertical; }
 .lineart rect:not([stroke]), .lineart circle:not([stroke]), .lineart path:not([stroke]), .lineart polygon:not([stroke]) { stroke: #1A1D1F; stroke-width: 0.2; }
 .view3d-controls { display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem; align-items: center; padding: 0.5rem 0.75rem; }
 .view3d-controls label { display: flex; align-items: center; gap: 0.5rem; }
+
+/* ---------- drawing set (K&B drawing standards) ---------- */
+.ds-root { color: #000; font-family: Arial, Helvetica, sans-serif; }
+.ds-sheet { box-sizing: border-box; background: #fff; break-after: page; page-break-after: always; overflow: hidden; }
+.ds-sheet:last-child { break-after: auto; page-break-after: auto; }
+.ds-border { box-sizing: border-box; height: 100%; display: flex; border: 2.5pt solid #000; }
+.ds-draw { flex: 1; min-width: 0; padding: 0.15in; overflow: hidden; display: flex; flex-direction: column; }
+.ds-small { font-size: 6.5pt; color: #333; margin: 4px 0 0; }
+.ds-disclaimer { font-size: 7pt; font-style: italic; margin: 4px 0 0; }
+.ds-marker { display: flex; align-items: center; gap: 0.12in; margin-top: 0.08in; }
+.ds-marker-title { font-size: 13pt; font-weight: 700; letter-spacing: 0.02em; border-bottom: 1.2pt solid #000; padding-bottom: 1px; }
+.ds-marker-scale { font-size: 7.5pt; padding-top: 2px; }
+.ds-plan { display: flex; gap: 0.3in; height: 100%; }
+.ds-plan-draw { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; }
+.ds-plan-side { font-size: 7.5pt; display: flex; flex-direction: column; gap: 4px; }
+.ds-plan-side h4, .ds-title-info h4 { font-size: 8pt; text-transform: uppercase; letter-spacing: 0.06em; margin: 6px 0 2px; border-bottom: 0.75pt solid #000; }
+.ds-plan-side ol, .ds-title-info ol { margin: 0; padding-left: 14px; }
+.ds-plan-side li, .ds-title-info li { margin-bottom: 2px; }
+.ds-north { display: flex; justify-content: flex-end; }
+.ds-elev { display: flex; flex-direction: column; gap: 0.3in; }
+.ds-elev-row { display: flex; gap: 0.3in; align-items: flex-end; }
+.ds-elev-cell { display: flex; flex-direction: column; }
+.ds-schedule h3 { font-size: 13pt; margin: 0 0 6px; text-transform: uppercase; }
+.ds-table, .ds-index { border-collapse: collapse; width: 100%; font-size: 8pt; }
+.ds-table th, .ds-index th { text-align: left; font-size: 7pt; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1pt solid #000; padding: 2px 4px; }
+.ds-table td, .ds-index td { border-bottom: 0.5pt solid #999; padding: 2px 4px; vertical-align: top; }
+.ds-3d { display: flex; flex-direction: column; height: 100%; }
+.ds-3d-view { width: 100%; flex: 1; min-height: 0; display: block; }
+.ds-photos { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: 1fr 1fr; gap: 0.15in; height: 100%; }
+.ds-photos figure { margin: 0; display: flex; flex-direction: column; min-height: 0; }
+.ds-photos img { width: 100%; flex: 1; min-height: 0; object-fit: cover; }
+.ds-photos figcaption { font-size: 8pt; padding-top: 2px; }
+.ds-title { display: flex; flex-direction: column; height: 100%; gap: 0.2in; }
+.ds-title-top { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ds-title-name { font-size: 36pt; font-weight: 700; line-height: 1.05; }
+.ds-title-graphic { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ds-title-bottom { display: grid; grid-template-columns: 1fr 1.2fr; gap: 0.3in; font-size: 8pt; }
+.ds-title-info dl { display: grid; grid-template-columns: auto 1fr; gap: 1px 8px; margin: 0; }
+.ds-title-info dt { font-weight: 700; }
+.ds-title-info dd { margin: 0; }
+.ds-tb { box-sizing: border-box; border-left: 1.5pt solid #000; display: flex; flex-direction: column; font-size: 6.5pt; }
+.ds-tb > * { padding: 5px 6px; border-bottom: 0.75pt solid #000; }
+.ds-tb-firm { display: flex; flex-direction: column; gap: 1px; }
+.ds-tb-firm .brand { margin-bottom: 4px; }
+.ds-tb-legal p { margin: 0 0 3px; font-size: 4.6pt; line-height: 1.25; }
+.ds-tb-fields { display: grid; grid-template-columns: auto 1fr; gap: 2px 6px; margin: 0; }
+.ds-tb-fields dt { font-size: 4.6pt; text-transform: uppercase; letter-spacing: 0.06em; padding-top: 1px; }
+.ds-tb-fields dd { margin: 0; }
+.ds-blank { border-bottom: 0.5pt solid #000; min-height: 9px; }
+.ds-tb-approve { display: grid; grid-template-columns: auto 1fr; gap: 4px 6px; align-items: end; font-size: 6pt; }
+.ds-tb-sheet { margin-top: auto; border-bottom: none !important; }
+.ds-tb-sheet-title { font-size: 9pt; font-weight: 700; text-transform: uppercase; }
+.ds-tb-sheet-id { font-size: 36pt; font-weight: 700; line-height: 1; padding-top: 4px; }
+.preview-sheet .ds-sheet { box-shadow: 0 3px 14px rgba(0,0,0,0.45); margin-bottom: 0.3in; }

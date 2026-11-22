@@ -10,6 +10,7 @@ import { ElevationView, type DrawTarget } from "@/components/drawing/ElevationVi
 import { PlanView } from "@/components/drawing/PlanView";
 import { View3D, DEFAULT_CAMERA, type Camera3D } from "@/components/drawing/View3D";
 import { PrintSheet } from "@/components/print/PrintSheet";
+import type { Paper } from "@/lib/sheets";
 import {
   angleGap,
   findProblems,
@@ -124,6 +125,8 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
   const [notice, setNotice] = useState<string | null>(null);
   const [printing, setPrinting] = useState(false);
   const [previewing, setPreviewing] = useState(false);
+  // The drawing set prints on 11x17 (the K&B standard sheet); Letter is for quick handouts.
+  const [paper, setPaper] = useState<Paper>("tabloid");
   const [drawing, setDrawing] = useState(false);
 
   const activeCatalog = useMemo<Catalog>(
@@ -986,7 +989,20 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
                 </label>
               ))}
               <label className="field">
-                <span className="field-label">Notes for the print sheet</span>
+                <span className="field-label">Room name (on the drawings)</span>
+                <input className="input" value={design.roomName ?? ""} placeholder="Kitchen"
+                  onChange={(e) => apply((d) => ({ ...d, roomName: e.target.value }))} />
+              </label>
+              <label className="field">
+                <span className="field-label">Which wall faces north?</span>
+                <select className="input" value={design.northWall ?? roomShape(design.room).walls[0]?.id ?? ""}
+                  onChange={(e) => apply((d) => ({ ...d, northWall: e.target.value }))}>
+                  {roomShape(design.room).walls.map((w) => <option key={w.id} value={w.id}>{w.label}{w.open ? " (open)" : ""}</option>)}
+                </select>
+                <span className="muted">Sets the north arrow, names each elevation (North wall, East wall) and starts them at the north wall.</span>
+              </label>
+              <label className="field">
+                <span className="field-label">Notes for the drawings</span>
                 <textarea className="input" rows={5} value={meta.notes ?? ""} onChange={(e) => setMeta((m) => ({ ...m, notes: e.target.value || null }))} />
               </label>
             </div>
@@ -1134,10 +1150,18 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
         <div className="preview-back no-print" role="dialog" aria-modal="true" aria-label="Design package preview">
           <div className="preview-bar">
             <div>
-              <div className="preview-title">Design package</div>
-              <div className="muted">US Letter landscape. This is exactly what prints.</div>
+              <div className="preview-title">Drawing set</div>
+              <div className="muted">{paper === "tabloid" ? "11 x 17" : "Letter"} landscape. This is exactly what prints. Set your printer to the same paper size.</div>
             </div>
             <div className="preview-actions">
+              <div className="chips" role="group" aria-label="Paper size">
+                <button className={`chip ${paper === "tabloid" ? "chip-on" : ""}`} onClick={() => setPaper("tabloid")} title="The standard drawing sheet">
+                  11 x 17
+                </button>
+                <button className={`chip ${paper === "letter" ? "chip-on" : ""}`} onClick={() => setPaper("letter")} title="For a quick handout">
+                  Letter
+                </button>
+              </div>
               <button className="btn btn-secondary" onClick={() => setPreviewing(false)}>
                 Close
               </button>
@@ -1155,7 +1179,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
           <div className="preview-scroll" ref={previewBody}>
             <div className="preview-stage" style={previewFit.w ? { width: previewFit.w * previewFit.k, height: previewFit.h * previewFit.k } : undefined}>
               <div className="preview-sheet" ref={previewSheet} style={{ transform: `scale(${previewFit.k})` }}>
-                <PrintSheet record={record} catalog={catalog} />
+                <PrintSheet record={record} catalog={catalog} paper={paper} />
               </div>
             </div>
           </div>
@@ -1164,7 +1188,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
 
       {printing && (
         <div className="print-only">
-          <PrintSheet record={record} catalog={catalog} />
+          <PrintSheet record={record} catalog={catalog} paper={paper} />
         </div>
       )}
     </div>
