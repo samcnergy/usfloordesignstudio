@@ -16,6 +16,7 @@ import { KitchenWizard } from "./KitchenWizard";
 import { MepPanel } from "./MepPanel";
 import { DEMO_ITEMS } from "@/lib/demo";
 import { newSoffit } from "@/lib/soffit";
+import { doorReach } from "@/lib/plan";
 import { FinishPanel } from "./FinishPanel";
 import { mepOf, mepPoint, moveMep, type MepItem } from "@/lib/mep";
 import {
@@ -338,6 +339,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
       doors: p.doors,
       drawers: p.drawers,
       splitHeight: p.split_height,
+      doorOpen: p.door_open,
       finishId: null,
       hinge: "left",
     };
@@ -428,6 +430,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
       doors: p.doors,
       drawers: p.drawers,
       splitHeight: p.split_height,
+      doorOpen: p.door_open,
       mountHeight: p.mount_height ?? (item.mountHeight > 0 && p.category === "wall" ? item.mountHeight : 0),
     });
   };
@@ -1685,6 +1688,20 @@ function ItemInspector({
           <LengthInput id="it-h" label="Height" value={item.height} min={1} max={design.room.ceiling} onChange={(v) => update({ height: v })} />
         )}
       </div>
+
+      {doorReach(item) && (
+        <div className="grid2">
+          <LengthInput
+            id="it-door"
+            label="Depth with the door open"
+            value={item.depth + doorReach(item)!.reach}
+            min={item.depth + 1}
+            max={120}
+            onChange={(v) => update({ doorOpen: v })}
+            hint={doorReach(item)!.typical ? "Typical size. Type the one on the spec sheet." : "From the spec sheet"}
+          />
+        </div>
+      )}
 
       {wallHung && (
         <div className="field">

@@ -21,7 +21,7 @@ import { counterLayout, counterRuns, rangeOpenings, sinkCuts } from "@/lib/count
 import { soffitQuad, soffitsOf } from "@/lib/soffit";
 import type { SinkSpec } from "@/lib/finishes";
 import { MEP_KINDS, type MepItem } from "@/lib/mep";
-import { BASE_TOP, COUNTER_STYLES, CENTERLINE_STYLES, DROP_DOOR, OVERHANG, applianceDoors, centerlines, counterOutlines, openingStops, planLine, planTiers } from "@/lib/plan";
+import { BASE_TOP, COUNTER_STYLES, CENTERLINE_STYLES, OVERHANG, applianceDoors, doorReach, centerlines, counterOutlines, openingStops, planLine, planTiers } from "@/lib/plan";
 import type { DrawTarget, ViewProps } from "./ElevationView";
 import { PROBLEM, PaintDefs, SELECT, finishPaint, monoPaint } from "./paint";
 
@@ -261,7 +261,7 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
         let d = 0;
         for (const i of design.items) {
           if (i.run !== w.id || i.mountHeight > 0 || i.offset > s + r * 1.2 || i.offset + i.width < s - r * 1.2) continue;
-          d = Math.max(d, i.depth + (i.style === "dishwasher" ? DROP_DOOR.dishwasher : i.style === "range" ? DROP_DOOR.range : i.style === "refrigerator" ? (i.width >= 33 ? i.width / 2 : i.width) : 0));
+          d = Math.max(d, i.depth + (doorReach(i)?.reach ?? 0));
         }
         for (const op of liveOpenings(design)) {
           if (op.wall === w.id && op.type === "door" && op.offset < s + r * 1.2 && op.offset + op.width > s - r * 1.2) d = Math.max(d, op.width);

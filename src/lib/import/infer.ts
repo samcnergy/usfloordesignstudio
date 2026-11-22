@@ -22,6 +22,7 @@ export interface ParsedProduct {
   drawers: number;
   shelves: number;
   split_height: number | null;
+  door_open: number | null;
   placeable: boolean;
   image_url: string | null;
   source_url: string | null;
@@ -46,6 +47,7 @@ const ALIASES: Record<string, string[]> = {
   drawers: ["drawers", "drawer count"],
   shelves: ["shelves", "shelf count"],
   split_height: ["split_height", "split height", "lower box height"],
+  door_open: ["door_open", "door open", "depth with door open", "depth door open", "open door depth"],
   placeable: ["placeable", "drawn", "draw"],
   image_url: ["image_url", "image", "photo", "picture", "image url", "photo url"],
   source_url: ["source_url", "url", "link", "product url", "web page"],
@@ -350,6 +352,7 @@ export function inferProduct(row: RawRow, defaults: { line: string | null }): Pa
     drawers,
     shelves,
     split_height: split,
+    door_open: numberField(row.door_open),
     placeable,
     image_url: (row.image_url ?? "").trim() || null,
     source_url: (row.source_url ?? "").trim() || null,

@@ -74,6 +74,7 @@ export interface Product {
   drawers: number;
   shelves: number;
   split_height: number | null; // tall pieces built as two boxes: height of the lower box
+  door_open: number | null; // appliances: depth with the door fully open, from the manufacturer's spec sheet
   placeable: boolean; // false for order-only accessories (molding, trays, panels for ends)
   image_url: string | null;
   source_url: string | null;
@@ -199,6 +200,8 @@ export interface PlacedItem {
   doors?: number;
   drawers?: number;
   splitHeight?: number | null;
+  /** Appliances: depth with the door fully open, from the catalog when it was placed. */
+  doorOpen?: number | null;
   finishId: string | null; // null means the design default
   hinge: "left" | "right";
 }

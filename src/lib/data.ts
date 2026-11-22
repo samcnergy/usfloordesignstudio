@@ -24,6 +24,7 @@ function toProduct(r: Record<string, unknown>): Product {
     drawers: (r.drawers as number) ?? 0,
     shelves: (r.shelves as number) ?? 0,
     split_height: num(r.split_height),
+    door_open: num(r.door_open),
     placeable: r.placeable as boolean,
     image_url: (r.image_url as string) ?? null,
     source_url: (r.source_url as string) ?? null,

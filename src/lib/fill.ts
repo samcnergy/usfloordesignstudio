@@ -31,7 +31,7 @@ export function itemFromProduct(catalog: Catalog, p: Product, run: string, offse
     id, productId: p.id, code: p.sku, name: p.name, lineName: lineName(catalog, line),
     category: p.category, style: p.style, run, offset,
     width: size?.width ?? p.width ?? 0, height: size?.height ?? p.height ?? 0, depth: p.depth ?? 0,
-    mountHeight, doors: p.doors, drawers: p.drawers, splitHeight: p.split_height, finishId: null, hinge: "left",
+    mountHeight, doors: p.doors, drawers: p.drawers, splitHeight: p.split_height, doorOpen: p.door_open, finishId: null, hinge: "left",
   };
 }
 

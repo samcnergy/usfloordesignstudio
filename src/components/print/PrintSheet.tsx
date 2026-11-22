@@ -18,7 +18,7 @@ import { counterLayout, counterRuns } from "@/lib/countertop";
 import { PlanView, planBox, type ElevationMark } from "@/components/drawing/PlanView";
 import { View3D, DEFAULT_CAMERA } from "@/components/drawing/View3D";
 import { allFrames, roomShape } from "@/lib/geometry";
-import { BASE_TOP, COUNTER_STYLES, DROP_DOOR } from "@/lib/plan";
+import { BASE_TOP, COUNTER_STYLES, doorReach } from "@/lib/plan";
 import { needsDemoPlan, newOpeningKeys } from "@/lib/demo";
 import { CabinetSection, EdgeDetail, sectionRun } from "@/components/drawing/Details";
 import { GROUP_NAME, GROUP_ORDER, MEP_KINDS, TAG_MEANING, mepKey, mepOf, type MepItem, type MepSpec } from "@/lib/mep";
@@ -29,7 +29,7 @@ import {
   FIRM, GENERAL_NOTES, INTERPRETATION, LIABILITY, PAPER, SCALES, copyright, drawingArea, fitScale, initials, roomName, sheetId,
   northAngle, wallDirections, wallsFromNorth, type Paper, type PaperSpec, type Scale,
 } from "@/lib/sheets";
-import type { Catalog, DesignRecord } from "@/lib/types";
+import type { Catalog, DesignData, DesignRecord } from "@/lib/types";
 import { liveOpenings } from "@/lib/types";
 import { fmtIn } from "@/lib/units";
 
@@ -201,7 +201,7 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
     (design.crown ?? 0) > 0 ? `Cabinet crown molding on the wall cabinets, ${fmtIn(design.crown)} high. Wall cabinets stop ${fmtIn(design.crown)} below the ceiling.` : "No cabinet crown molding. Wall cabinets run to the ceiling.",
     "Toe kicks per the cabinet manufacturer, finished to match the cabinets.",
     "The plan is cut at the ceiling. Base cabinets and anything else under the counter are hidden lines; the countertop, wall and tall cabinets are object lines.",
-    `Appliance doors are shown fully open. Sizes are typical (dishwasher door ${fmtIn(DROP_DOOR.dishwasher)}, range door ${fmtIn(DROP_DOOR.range)}); confirm with the manufacturer's installation guide.`,
+    doorNote(design),
     "Dimensions are from the finished wall surface. Doors and windows are dimensioned to the outside of the casing. Fixtures and appliances are located by centerlines.",
     ...(record.notes ? [record.notes] : []),
   ].filter((n): n is string => !!n);
@@ -901,4 +901,25 @@ function TitleBlock({ spec, record, sheet, date }: { spec: PaperSpec; record: De
       </div>
     </aside>
   );
+}
+
+/** The plan note on appliance doors: each one's depth with the door open, from the catalog or typical. */
+function doorNote(design: DesignData): string | null {
+  const seen = new Set<string>();
+  const given: string[] = [];
+  const typical: string[] = [];
+  for (const it of design.items) {
+    const d = doorReach(it);
+    if (!d) continue;
+    const key = `${it.code}|${it.doorOpen ?? ""}|${it.width}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const text = `${it.code} ${fmtIn(it.depth + d.reach)}`;
+    (d.typical ? typical : given).push(text);
+  }
+  if (!given.length && !typical.length) return null;
+  const parts = ["Appliance doors are shown fully open."];
+  if (given.length) parts.push(`Depth with the door open, from the manufacturer: ${given.join(", ")}.`);
+  if (typical.length) parts.push(`Typical sizes, not from the manufacturer: ${typical.join(", ")}; confirm with the manufacturer's installation guide.`);
+  return parts.join(" ");
 }

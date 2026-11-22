@@ -59,7 +59,7 @@ Manufacturers have product lines (Top King has American Style and European Style
 
 To add a manufacturer's products, use Catalog > Import. Paste a table or upload a CSV or Excel file with at least a `sku` column. Anything missing is read from a `description` column in the usual vendor format (`Base Cabinet- 12"(W) x 34 1/2"(H) x 24"(D) 1 Drawer -1 Door -1 Shelf`) and from the SKU (W3036 is a wall cabinet 30 wide and 36 high). The preview shows what is new, changed and unchanged before anything is saved. Download the template from that page for the full list of columns.
 
-The Generic manufacturer holds standard appliance sizes, available with every line.
+The Generic manufacturer holds standard appliance sizes, available with every line. Dishwashers, ranges and refrigerators also take a depth with the door open (`door_open`, migration 0005), from the manufacturer's spec sheet; the plan draws the open door to it and notes which appliances still use a typical size. A placed appliance keeps the size it had when it was placed, and the designer can change it on the selected piece.
 
 ## Database setup (once)
 

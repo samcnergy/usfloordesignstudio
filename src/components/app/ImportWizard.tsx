@@ -21,8 +21,9 @@ const ownStorage = (url: string | null) => !!url && url.includes("/storage/v1/ob
 type Status = "new" | "update" | "same";
 
 function sameProduct(p: ParsedProduct, e: Product): boolean {
-  const keys: (keyof ParsedProduct & keyof Product)[] = ["name", "description", "category", "style", "width", "height", "depth", "mount_height", "doors", "drawers", "shelves", "split_height", "placeable"];
-  return keys.every((k) => (p[k] ?? null) === (e[k] ?? null)) && (p.image_url === null || p.image_url === e.image_url || ownStorage(e.image_url));
+  const keys: (keyof ParsedProduct & keyof Product)[] = ["name", "description", "category", "style", "width", "height", "depth", "mount_height", "doors", "drawers", "shelves", "split_height", "door_open", "placeable"];
+  // a blank door-open size keeps the one already in the catalog
+  return keys.every((k) => (k === "door_open" && p.door_open === null) || (p[k] ?? null) === (e[k] ?? null)) && (p.image_url === null || p.image_url === e.image_url || ownStorage(e.image_url));
 }
 
 function size(p: ParsedProduct): string {
@@ -122,6 +123,8 @@ export function ImportWizard({ catalog }: { catalog: Catalog }) {
         lineIds.set(name.toLowerCase(), data.id as string);
       }
       // 3. products, in file order
+      // the door-open size is only sent when the file has one, so a cabinet file never touches it
+      const withDoor = rows.some(({ p }) => p.door_open !== null);
       const payload = rows.map(({ p, existing }, i) => {
         const keepPhoto = existing && ownStorage(existing.image_url) && (!p.image_url || !ownStorage(p.image_url));
         return {
@@ -139,6 +142,7 @@ export function ImportWizard({ catalog }: { catalog: Catalog }) {
           drawers: p.drawers,
           shelves: p.shelves,
           split_height: p.split_height,
+          ...(withDoor ? { door_open: p.door_open ?? existing?.door_open ?? null } : {}),
           placeable: p.placeable,
           image_url: keepPhoto ? existing!.image_url : (p.image_url ?? existing?.image_url ?? null),
           source_url: p.source_url ?? existing?.source_url ?? null,

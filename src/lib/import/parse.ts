@@ -91,6 +91,7 @@ export const TEMPLATE_HEADERS = [
   "drawers",
   "shelves",
   "split_height",
+  "door_open",
   "placeable",
   "image_url",
   "source_url",
@@ -99,9 +100,9 @@ export const TEMPLATE_HEADERS = [
 export function templateCsv(): string {
   const rows = [
     TEMPLATE_HEADERS,
-    ["American Style", "B12", "", 'Base Cabinet- 12"(W) x 34 1/2"(H) x 24"(D) 1 Drawer -1 Door -1 Shelf', "Base Cabinet", "", "", "", "", "", "", "", "", "", "", "", "", ""],
-    ["American Style", "W2436", "Wall cabinet", "", "", "wall", "wall", "24", "36", "12", "54", "2", "0", "2", "", "", "", ""],
-    ["American Style", "CM4", "Crown molding", "Crown Molding: 4''(W)x 96''(L)", "Accessories", "accessory", "", "", "", "", "", "", "", "", "", "no", "", ""],
+    ["American Style", "B12", "", 'Base Cabinet- 12"(W) x 34 1/2"(H) x 24"(D) 1 Drawer -1 Door -1 Shelf', "Base Cabinet", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
+    ["American Style", "W2436", "Wall cabinet", "", "", "wall", "wall", "24", "36", "12", "54", "2", "0", "2", "", "", "", "", ""],
+    ["American Style", "CM4", "Crown molding", "Crown Molding: 4''(W)x 96''(L)", "Accessories", "accessory", "", "", "", "", "", "", "", "", "", "", "no", "", ""],
   ];
   return rows.map((r) => r.map((c) => (/[",\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join(",")).join("\n") + "\n";
 }

@@ -11,6 +11,7 @@ import { uploadImage } from "@/lib/data";
 import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
 import type { Catalog, Category, Style } from "@/lib/types";
 import { CATEGORIES, STYLES } from "@/lib/types";
+import { DOOR_STYLES } from "@/lib/plan";
 import { fmtIn, parseLength } from "@/lib/units";
 
 export const STYLE_LABEL: Record<Style, string> = {
@@ -60,6 +61,8 @@ interface FieldSpec {
   options?: { value: string; label: string }[];
   hint?: string;
   wide?: boolean;
+  /** Show the field only when this holds for the values being edited. */
+  when?: (v: Record<string, string>) => boolean;
 }
 
 const PRODUCT_FIELDS: FieldSpec[] = [
@@ -76,6 +79,11 @@ const PRODUCT_FIELDS: FieldSpec[] = [
   { key: "drawers", label: "Drawers", type: "int" },
   { key: "shelves", label: "Shelves", type: "int" },
   { key: "split_height", label: "Lower box height", type: "length", hint: "Tall cabinets built as two boxes" },
+  {
+    key: "door_open", label: "Depth with the door open", type: "length",
+    hint: "From the manufacturer's spec sheet: back of the appliance to the open door. Blank uses a typical size.",
+    when: (v) => DOOR_STYLES.has(v.style),
+  },
   { key: "placeable", label: "Drawn in the plan", type: "bool", hint: "Off for order-only items like molding" },
   { key: "image_url", label: "Photo", type: "image", wide: true },
   { key: "source_url", label: "Vendor page", type: "text", wide: true },
@@ -423,6 +431,7 @@ export function CatalogManager({ catalog, admin }: { catalog: Catalog; admin: bo
                             <div className="muted">
                               {STYLE_LABEL[p.style]}
                               {p.mount_height ? ` · hung at ${fmtIn(p.mount_height)}` : ""}
+                              {DOOR_STYLES.has(p.style) ? (p.door_open ? ` · ${fmtIn(p.door_open)} deep with the door open` : " · door open size not entered") : ""}
                               {p.placeable ? "" : " · order only"}
                               {p.active ? "" : " · hidden"}
                             </div>
@@ -571,6 +580,11 @@ function EditModal({ editing, onClose }: { editing: Editing; onClose: () => void
     setError(null);
     const payload: Record<string, unknown> = row ? {} : { ...fixed };
     for (const f of fields) {
+      if (f.when && !f.when(values)) {
+        // a hidden field that had a value is cleared, so a cabinet never keeps an appliance size
+        if (row && row[f.key] !== null && row[f.key] !== undefined) payload[f.key] = null;
+        continue;
+      }
       const raw = (values[f.key] ?? "").trim();
       if (f.required && raw === "") return setError(`${f.label} is required.`);
       switch (f.type) {
@@ -637,7 +651,7 @@ function EditModal({ editing, onClose }: { editing: Editing; onClose: () => void
       <div className="modal" role="dialog" aria-label={title}>
         <h2>{title}</h2>
         <div className="grid2">
-          {fields.map((f) => (
+          {fields.filter((f) => !f.when || f.when(values)).map((f) => (
             <div key={f.key} className="field" style={f.wide || f.type === "textarea" ? { gridColumn: "1 / -1" } : undefined}>
               <span className="field-label">{f.label}</span>
               {f.type === "textarea" ? (

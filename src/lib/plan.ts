@@ -39,6 +39,21 @@ export const OVERHANG = 1;
  */
 export const DROP_DOOR = { dishwasher: 27, range: 20 } as const;
 
+/** Appliances that are drawn with their doors open, and so take an open-door size in the catalog. */
+export const DOOR_STYLES = new Set(["dishwasher", "range", "refrigerator"]);
+
+/**
+ * How far an appliance's open door reaches past its front. From the catalog's "depth with the door
+ * open" when it was typed (owner, 2026-11-22); otherwise the typical size, and `typical` says so.
+ */
+export function doorReach(it: PlacedItem): { reach: number; typical: boolean } | null {
+  if (!DOOR_STYLES.has(it.style)) return null;
+  if (it.doorOpen && it.doorOpen > it.depth + 0.01) return { reach: it.doorOpen - it.depth, typical: false };
+  if (it.style === "dishwasher" || it.style === "range") return { reach: DROP_DOOR[it.style], typical: true };
+  // a refrigerator door swung 90 degrees reaches its own width: half the box for French doors
+  return { reach: it.width >= 33 ? it.width / 2 : it.width, typical: true };
+}
+
 const overlap = (a0: number, a1: number, b0: number, b1: number) => a0 < b1 - 0.01 && b0 < a1 - 0.01;
 
 /** Something hanging over this piece on the same wall or island: a hood, a microwave, a wall cabinet. */
@@ -94,16 +109,18 @@ export function applianceDoors(it: PlacedItem, frame: RunFrame): SwingShape[] {
   const s1 = it.offset + it.width;
   if (it.style === "dishwasher" || it.style === "range") {
     // a drop-down door, lying flat in front of the appliance
-    const reach = DROP_DOOR[it.style];
+    const reach = doorReach(it)!.reach;
     return [{ kind: "box", pts: [f(s0, front), f(s1, front), f(s1, front + reach), f(s0, front + reach)] }];
   }
   if (it.style === "refrigerator") {
     // side-hinged doors swung 90 degrees: one door, or two French doors on refrigerators 33" and wider
+    // the leaf is the door's width, or the reach from the spec sheet's depth with the door open
+    const given = doorReach(it)!;
     const leaf = (hingeS: number, otherS: number): SwingShape[] => {
-      const w = Math.abs(otherS - hingeS);
+      const w = given.typical ? Math.abs(otherS - hingeS) : given.reach;
       const hinge = f(hingeS, front);
       const tip = f(hingeS, front + w);
-      const jamb = f(otherS, front);
+      const jamb = f(hingeS + Math.sign(otherS - hingeS) * w, front);
       const ax = tip.x - hinge.x, ay = tip.y - hinge.y, bx = jamb.x - hinge.x, by = jamb.y - hinge.y;
       return [
         { kind: "line", a: hinge, b: tip },
