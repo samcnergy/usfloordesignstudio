@@ -11,10 +11,14 @@ import { PlanView } from "@/components/drawing/PlanView";
 import { View3D, DEFAULT_CAMERA, type Camera3D } from "@/components/drawing/View3D";
 import { PrintSheet } from "@/components/print/PrintSheet";
 import type { Paper } from "@/lib/sheets";
+import { fillLine, fillWall } from "@/lib/fill";
+import { KitchenWizard } from "./KitchenWizard";
 import {
+  allFrames,
   angleGap,
   findProblems,
   firstFreeOffset,
+  nearestFreeOffset,
   isWall,
   itemLabel,
   itemQuad,
@@ -194,6 +198,10 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
     return () => window.removeEventListener("beforeunload", warn);
   }, [save]);
 
+  // What "Fill this wall" placed, in plain words, kept until the designer closes it.
+  const [fillNotes, setFillNotes] = useState<string[] | null>(null);
+  const [wizard, setWizard] = useState(false);
+
   const flash = useCallback((msg: string) => {
     setNotice(msg);
     window.setTimeout(() => setNotice((n) => (n === msg ? null : n)), 3500);
@@ -251,12 +259,29 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
     [apply, flash],
   );
 
-  const addProduct = (p: Product) => {
+  /** Fill the chosen wall with standard cabinets and fillers (owner, 2026-11-21: easy for anyone). */
+  const fillActiveWall = () => {
+    const run = activeRunValid;
+    if (!isWall(design.room, run)) {
+      flash("Pick a wall to fill. Islands are filled by adding cabinets to them.");
+      return;
+    }
+    const r = fillWall(design, activeCatalog, run, uid);
+    setFillNotes(r.notes);
+    if (!r.items.length) return;
+    const line = fillLine(activeCatalog, design);
+    apply((d) => ({ ...d, items: [...d.items, ...r.items], lineId: d.lineId ?? line }));
+    selectAll(r.items.map((i) => i.id));
+  };
+
+  /** Add a product to the chosen run, or, when it was dragged in, where it was dropped. */
+  const addProduct = (p: Product, at?: { run: string; center: number }) => {
     if (!p.placeable || p.width === null || p.height === null || p.depth === null) {
       addExtra(p);
       return;
     }
-    const run = activeRunValid;
+    const run = at?.run ?? activeRunValid;
+    if (at) setActiveRun(at.run);
     const mount = p.mount_height ?? 0;
     if (!isWall(design.room, run) && (p.category === "wall" || p.style === "hood" || mount > 0)) {
       flash("Wall-hung pieces go on a wall. Pick a wall first.");
@@ -268,7 +293,12 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
     }
     const width = p.width;
     const height = p.height;
-    let offset = firstFreeOffset(design, run, width, [mount, mount + height]);
+    const dropAt = at ? nearestFreeOffset(design, run, width, [mount, mount + height], at.center - width / 2) : null;
+    if (at && dropAt === null && p.style !== "hood") {
+      flash(`There is no room for ${p.sku} on ${runLabel(design, run)}. Make room first, or drop it on another wall.`);
+      return;
+    }
+    let offset = dropAt ?? firstFreeOffset(design, run, width, [mount, mount + height]);
     if (p.style === "hood") {
       // center a new hood over the first range on this run that has no hood yet
       const hoods = design.items.filter((i) => i.run === run && i.style === "hood");
@@ -794,6 +824,79 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
     return () => window.removeEventListener("keydown", key);
   }, [apply, design, drawing, flash, multi, previewing, undo, redo, removeSelected, selectAll, selectedId, selectedIds, selectedIsland, selectedItem, selectedOpening, setSelectedId, updateIsland, updateItem, updateOpening]);
 
+  // ---------- drag from the catalog (owner, 2026-11-21) ----------
+  const dropProduct = (e: React.DragEvent<HTMLDivElement>) => {
+    const id = e.dataTransfer.getData("text/x-product");
+    const p = activeCatalog.products.find((x) => x.id === id);
+    if (!p) return;
+    e.preventDefault();
+    const svg = e.currentTarget.querySelector("svg");
+    if (!svg) {
+      addProduct(p);
+      return;
+    }
+    const pt = svgPoint(svg as SVGSVGElement, e.clientX, e.clientY);
+    if (viewValid !== "plan") {
+      // a front view: its x axis is the offset along that wall or island
+      if (runFrame(design, viewValid)) addProduct(p, { run: viewValid, center: pt.x });
+      return;
+    }
+    // the top view: the wall or island the drop is nearest to, measured into the room
+    let best: { run: string; center: number; score: number } | null = null;
+    for (const f of allFrames(design)) {
+      const dx = pt.x - f.origin.x;
+      const dy = pt.y - f.origin.y;
+      const along = dx * f.u.x + dy * f.u.y;
+      const into = dx * f.n.x + dy * f.n.y;
+      const deep = f.kind === "island" ? 48 : 60;
+      if (along < -12 || along > f.length + (f.kind === "island" ? 48 : 12) || into < -18 || into > deep) continue;
+      if (f.kind === "wall" && f.open) continue;
+      const score = Math.abs(into - 12);
+      if (!best || score < best.score) best = { run: f.id, center: along, score };
+    }
+    if (!best) {
+      flash("Drop it next to a wall or an island.");
+      return;
+    }
+    addProduct(p, { run: best.run, center: best.center });
+  };
+
+  // ---------- on-screen buttons for the selection (owner, 2026-11-21: nothing needs the keyboard) ----------
+  const [hasClip, setHasClip] = useState(false);
+  const duplicateSelection = () => {
+    const clip = copySelection(design, selectedIds);
+    if (!clip) return;
+    const out = pasteClipboard(design, clip, 24, uid);
+    apply(() => out.design);
+    selectAll(out.ids);
+  };
+  const copySelectionToClip = () => {
+    const clip = copySelection(design, selectedIds);
+    if (!clip) return;
+    clipboard.current = clip;
+    pastes.current = 0;
+    setHasClip(true);
+    flash(`Copied ${clip.items.length} piece${clip.items.length === 1 ? "" : "s"}. Press Paste to place a copy.`);
+  };
+  const pasteFromClip = () => {
+    if (!clipboard.current) return;
+    pastes.current += 1;
+    const out = pasteClipboard(design, clipboard.current, 24 * pastes.current, uid);
+    apply(() => out.design);
+    selectAll(out.ids);
+  };
+  const turnSelection = (step: number) => {
+    const run = selectedIsland ?? (selectedItem ? itemRun(design, selectedItem) : null);
+    if (!run) {
+      flash("Pieces on a wall follow the wall. Drag a piece off the wall to turn it.");
+      return;
+    }
+    apply((d) => {
+      const now = d.islands.find((i) => i.id === run.id);
+      return now ? turnRun(d, now.id, now.rotation + step) : d;
+    });
+  };
+
   // ---------- preview ----------
   // The package is drawn at its real paper size, so it is scaled down to fit the window.
   const previewBody = useRef<HTMLDivElement | null>(null);
@@ -863,6 +966,9 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
           <button className="btn btn-ghost" onClick={redo} disabled={!history.canRedo} title="Redo (Ctrl/Cmd+Shift+Z)">
             Redo
           </button>
+          <button className="btn btn-secondary" onClick={() => setWizard(true)} title="Answer a few questions and the kitchen is laid out for you">
+            Kitchen wizard
+          </button>
           <button className="btn btn-secondary" onClick={() => setPreviewing(true)} title="See the whole package before printing">
             Preview
           </button>
@@ -910,6 +1016,22 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
                     </button>
                   ))}
               </div>
+              {tab === "cabinets" && design.items.length === 0 && (
+                <button className="btn btn-primary btn-fill" onClick={() => setWizard(true)}>
+                  Start with the kitchen wizard
+                </button>
+              )}
+              {tab === "cabinets" && isWall(design.room, activeRunValid) && (
+                <button className="btn btn-primary btn-fill" onClick={fillActiveWall} title="Fills the empty parts of this wall with standard cabinets and fillers. Nothing already placed moves.">
+                  Fill {wallLabel(design.room, activeRunValid)} with cabinets
+                </button>
+              )}
+              {tab === "cabinets" && fillNotes && (
+                <div className="fill-notes" role="status">
+                  {fillNotes.map((n, i) => <p key={i}>{n}</p>)}
+                  <button className="btn btn-ghost btn-small" onClick={() => setFillNotes(null)}>OK</button>
+                </div>
+              )}
             </div>
           )}
 
@@ -1042,7 +1164,25 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
               </>
             )}
           </div>
-          <div className="canvas-stage">
+          {(selectedIds.size > 0 || hasClip) && !drawing && (
+            <div className="sel-bar" role="toolbar" aria-label="Selected pieces">
+              {selectedIds.size > 0 && <span className="sel-count">{selectedIds.size} selected</span>}
+              {selectedIds.size > 0 && <button className="btn btn-secondary" onClick={duplicateSelection}>Duplicate</button>}
+              {selectedIds.size > 0 && <button className="btn btn-secondary" onClick={copySelectionToClip}>Copy</button>}
+              {hasClip && <button className="btn btn-secondary" onClick={pasteFromClip}>Paste</button>}
+              {(selectedIsland || (selectedItem && itemRun(design, selectedItem))) && !multi && (
+                <>
+                  <button className="btn btn-secondary" onClick={() => turnSelection(-15)} title="Turn left 15 degrees">Turn left</button>
+                  <button className="btn btn-secondary" onClick={() => turnSelection(15)} title="Turn right 15 degrees">Turn right</button>
+                </>
+              )}
+              {selectedIds.size > 0 && <button className="btn btn-secondary sel-delete" onClick={removeSelected}>Delete</button>}
+              {selectedIds.size > 0 && <button className="btn btn-ghost" onClick={() => setSelectedId(null)}>Done</button>}
+            </div>
+          )}
+          <div className="canvas-stage"
+            onDragOver={(e) => { if (e.dataTransfer.types.includes("text/x-product")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; } }}
+            onDrop={dropProduct}>
             {drawing ? (
               <DrawRoom room={design.room} minWalls={minWalls} onFinish={finishDrawing} onCancel={() => setDrawing(false)} flash={flash} />
             ) : viewValid === "3d" ? (
@@ -1186,6 +1326,18 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
         </div>
       )}
 
+      {wizard && (
+        <KitchenWizard design={design} catalog={activeCatalog} onClose={() => setWizard(false)}
+          onDone={(built, notes) => {
+            apply(() => built);
+            setWizard(false);
+            setTab("cabinets");
+            setView("plan");
+            setSelectedId(null);
+            setFillNotes(["Your kitchen is laid out. Drag any piece to move it, click one to change it, or use Fill on a wall.", ...notes]);
+          }} />
+      )}
+
       {printing && (
         <div className="print-only">
           <PrintSheet record={record} catalog={catalog} paper={paper} />
@@ -1265,7 +1417,9 @@ function ProductPicker({
             {isOpen && (
               <div className="prod-list">
                 {list.map((p) => (
-                  <button key={p.id} className="prod-row" onClick={() => onAdd(p)} title={`${p.description ?? p.name}\n${p.placeable ? `Click to add to ${target}` : "Click to add to the order list"}`}>
+                  <button key={p.id} className="prod-row" onClick={() => onAdd(p)} draggable={p.placeable}
+                    onDragStart={(e) => { e.dataTransfer.setData("text/x-product", p.id); e.dataTransfer.effectAllowed = "copy"; }}
+                    title={`${p.description ?? p.name}\n${p.placeable ? `Click to add to ${target}, or drag it onto a wall` : "Click to add to the order list"}`}>
                     {p.image_url ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={p.image_url} alt="" className="prod-thumb" loading="lazy" />

@@ -494,6 +494,35 @@ export function itemLabel(item: Pick<PlacedItem, "code" | "style" | "category" |
 }
 
 /** First offset on the run where a piece of this width fits without hitting anything at the same height. */
+/**
+ * The ends of a wall taken by the pieces on the walls either side that reach into the corner, at the
+ * heights in `span`. Without this, a new piece could land inside the fridge or cabinets around a corner.
+ */
+export function cornerTaken(design: DesignData, run: string, span: [number, number], ignoreId?: string): [number, number][] {
+  const walls = roomShape(design.room).walls;
+  const i = walls.findIndex((w) => w.id === run);
+  if (i < 0) return [];
+  const frame = walls[i];
+  const reach = (w: RunFrame, atEnd: boolean) => {
+    if (w.open || w.id === run) return 0;
+    let d = 0;
+    for (const it of design.items) {
+      if (it.run !== w.id || it.id === ignoreId) continue;
+      const [v0, v1] = verticalSpan(it);
+      if (!spansOverlap(v0, v1, span[0], span[1])) continue;
+      const near = atEnd ? it.offset + it.width > w.length - it.depth - EPS : it.offset < it.depth + EPS;
+      if (near) d = Math.max(d, it.depth);
+    }
+    return d;
+  };
+  const out: [number, number][] = [];
+  const before = reach(walls[(i - 1 + walls.length) % walls.length], true);
+  const after = reach(walls[(i + 1) % walls.length], false);
+  if (before > 0) out.push([-1, before]);
+  if (after > 0) out.push([frame.length - after, frame.length + 1]);
+  return out;
+}
+
 export function firstFreeOffset(design: DesignData, run: string, width: number, span: [number, number], ignoreId?: string): number {
   const frame = runFrame(design, run);
   if (!frame) return 0;
@@ -509,6 +538,7 @@ export function firstFreeOffset(design: DesignData, run: string, width: number, 
       const [o0, o1] = openingSpan(op);
       if (spansOverlap(o0, o1, span[0], span[1])) taken.push([op.offset, op.offset + op.width]);
     }
+    taken.push(...cornerTaken(design, run, span, ignoreId));
   }
   taken.sort((a, b) => a[0] - b[0]);
   let cursor = 0;
@@ -517,4 +547,35 @@ export function firstFreeOffset(design: DesignData, run: string, width: number, 
     cursor = Math.max(cursor, s1);
   }
   return cursor;
+}
+
+/**
+ * The free offset on the run nearest to where a piece was dropped (owner, 2026-11-21: drag from the
+ * catalog). A spot that would hit something at the same height slides to the closest one that does not.
+ */
+export function nearestFreeOffset(design: DesignData, run: string, width: number, span: [number, number], desired: number): number | null {
+  const frame = runFrame(design, run);
+  if (!frame) return Math.max(0, desired);
+  const taken: [number, number][] = [];
+  for (const it of design.items) {
+    if (it.run !== run) continue;
+    const [v0, v1] = verticalSpan(it);
+    if (spansOverlap(v0, v1, span[0], span[1])) taken.push([it.offset, it.offset + it.width]);
+  }
+  const wall = isWall(design.room, run);
+  if (wall) {
+    for (const op of design.openings) {
+      if (op.wall !== run) continue;
+      const [o0, o1] = openingSpan(op);
+      if (spansOverlap(o0, o1, span[0], span[1])) taken.push([op.offset, op.offset + op.width]);
+    }
+  }
+  if (wall) taken.push(...cornerTaken(design, run, span));
+  const max = wall ? frame.length - width : Infinity;
+  if (max < -EPS) return null;
+  const clampTo = (x: number) => Math.min(max, Math.max(0, x));
+  const free = (x: number) => taken.every(([a, b]) => !spansOverlap(a, b, x, x + width));
+  const candidates = [clampTo(desired), ...taken.flatMap(([a, b]) => [clampTo(b), clampTo(a - width)])].filter(free);
+  if (!candidates.length) return null;
+  return candidates.reduce((best, x) => (Math.abs(x - desired) < Math.abs(best - desired) ? x : best), candidates[0]);
 }

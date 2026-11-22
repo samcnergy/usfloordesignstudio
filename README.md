@@ -17,6 +17,8 @@ Next.js 16 (App Router), React 19, TypeScript strict, Supabase (Postgres, Auth, 
 | `src/lib/types.ts` | Design data model. All lengths are inches. |
 | `src/lib/geometry.ts` | Walls and islands as "runs", placement, overlap and blocking checks, shop labels (B24, W3030). |
 | `src/lib/place.ts` | Moving pieces: sliding along a wall, lifting one onto the open floor, turning a run, and joining a wall again. |
+| `src/lib/fill.ts` | Fill a wall: standard cabinets and fillers (3/4", 1", 1 1/2", 2") planned around corners, doors, windows and appliances. |
+| `src/lib/wizard.ts` | The kitchen wizard: builds a one-wall, galley, L or U kitchen (sink, range and hood, fridge, dishwasher, door, island) from a few answers. |
 | `src/lib/draw.ts` | Drawing a room with the mouse: snapping, typed lengths and angles, and turning the corners into walls. |
 | `src/lib/units.ts` | Inch fractions in and out (`34 1/2"`, `12'-6"`). |
 | `src/lib/standard-catalog.ts` | Sample catalog for the development sandbox only. |
@@ -24,7 +26,8 @@ Next.js 16 (App Router), React 19, TypeScript strict, Supabase (Postgres, Auth, 
 | `src/lib/data.ts` | Every database read and write. |
 | `src/components/drawing/` | Top view (`PlanView`), front views (`ElevationView`, `CabinetFront`), dimension strings, fills. |
 | `src/components/drawing/View3D.tsx` | 3D view: the kitchen as a line drawing (or in color), turned and tilted; each cabinet front is the front-view drawing laid on its face. `scripts/render-3d-sample.tsx` draws a sample kitchen to an SVG. |
-| `src/components/editor/Editor.tsx` | The designer screen: panels, dragging, undo, keyboard, autosave. |
+| `src/components/editor/Editor.tsx` | The designer screen: panels, dragging, drag from the catalog, the selection buttons (duplicate, copy, paste, turn, delete), undo, keyboard, autosave. |
+| `src/components/editor/KitchenWizard.tsx` | The five-step kitchen wizard screen. |
 | `src/components/editor/RoomPanel.tsx` | Room tab: ceiling, wall thickness, and the walls with their lengths, corners and open sides. |
 | `src/components/editor/DrawRoom.tsx` | Draw walls: click each corner in the top view, or type a length (and corner angle) and press Enter. |
 | `src/components/print/PrintSheet.tsx` | The printable package, US Letter landscape. |
