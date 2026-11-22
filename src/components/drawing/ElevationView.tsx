@@ -155,16 +155,43 @@ export function elevationLayout(design: DesignData, run: string, fsOverride?: nu
 }
 
 /** A front view's printed size, in paper inches, at this scale. */
-export function elevationPaperSize(design: DesignData, run: string, scale: number, fs: number): { width: number; height: number } | null {
+export function elevationPaperSize(design: DesignData, run: string, scale: number, fs: number, withRefs = false): { width: number; height: number } | null {
   const g = elevationLayout(design, run, fs);
   if (!g) return null;
-  return { width: (g.L + g.ML + g.MR) / scale, height: (g.H + g.MT + g.MB) / scale };
+  return { width: (g.L + g.ML + g.MR) / scale, height: (g.H + g.MT + g.MB + (withRefs ? refRow(scale) : 0)) / scale };
 }
 
-export function ElevationView({ design, catalog, run, selectedId, selectedIds, problemIds, onTargetDown, onBackgroundDown, className, print }: ViewProps & { run: string }) {
+/** Room under a printed front view for its section and detail markers: a 5/8" bubble and a little air. */
+const refRow = (scale: number) => scale * 0.3125 * 3;
+
+/** A section cut or detail marker on a front view (K&B drawing standards, Chapter 4): drawing number over the sheet it is on. */
+export type ElevationRefs = {
+  /** The section cut: where along the run, its number and sheet; the arrow points the way the section looks (to the right). */
+  section?: { s: number; n: number; sheet: string };
+  /** A detail: the area it enlarges, its number and sheet. */
+  detail?: { x0: number; x1: number; z0: number; z1: number; n: number; sheet: string };
+};
+
+function RefBubble({ c, r, n, sheet }: { c: { x: number; y: number }; r: number; n: number; sheet: string }) {
+  return (
+    <g>
+      <circle cx={c.x} cy={c.y} r={r} fill="#FFFFFF" stroke="#000000" strokeWidth={r * 0.06} />
+      <line x1={c.x - r} x2={c.x + r} y1={c.y} y2={c.y} stroke="#000000" strokeWidth={r * 0.05} />
+      <text x={c.x} y={c.y - r * 0.22} fontSize={r * 0.85} textAnchor="middle" fontWeight={700}>{n}</text>
+      <text x={c.x} y={c.y + r * 0.62} fontSize={r * 0.42} textAnchor="middle">{sheet}</text>
+    </g>
+  );
+}
+
+export function ElevationView({ design, catalog, run, selectedId, selectedIds, problemIds, onTargetDown, onBackgroundDown, className, print, refs }: ViewProps & { run: string; refs?: ElevationRefs }) {
   const g = elevationLayout(design, run, print ? print.scale * 0.13 : undefined);
   if (!g) return null;
-  const { frame, L, island, H, fs, items, lower, upper, labelSize, lowerLabels, upperLabels, labelStep, lowerExtra, upperExtra, ML, MR, MT, MB } = g;
+  const { frame, L, island, H, fs, items, lower, upper, labelSize, lowerLabels, upperLabels, labelStep, lowerExtra, upperExtra, ML, MR, MT } = g;
+  const withRefs = !!print && !!(refs?.section || refs?.detail);
+  const MB = g.MB + (withRefs ? refRow(print!.scale) : 0);
+  // the marker row sits under the dimensions; bubbles are 5/8" across on paper
+  const rr = print ? print.scale * 0.3125 : 0;
+  const rowY = g.H + g.MB + rr * 1.3;
   const open = !!frame.open;
   const mono = !!print;
   const Y = (z: number) => H - z;
@@ -313,6 +340,37 @@ export function ElevationView({ design, catalog, run, selectedId, selectedIds, p
         <DimV key={`h-${m}`} y0={Y(m)} y1={Y(sortedMarks[i + 1])} x={-fs * 1.6} fs={fs * 0.75} />
       ))}
       {!island && <DimV y0={Y(0)} y1={Y(H)} x={-fs * 4.6} fs={fs * 0.85} />}
+
+      {withRefs && refs?.section && (() => {
+        // section cut marker: the cut line down through the cabinets, the tail at the top, the bubble below with its arrow
+        const x = refs.section.s;
+        const c = { x, y: rowY };
+        return (
+          <g>
+            <line x1={x} x2={x} y1={0} y2={c.y - rr} stroke="#000000" strokeWidth={rr * 0.07} strokeDasharray={`${rr * 0.9} ${rr * 0.25}`} />
+            <line x1={x} x2={x + rr * 0.8} y1={0} y2={0} stroke="#000000" strokeWidth={rr * 0.16} />
+            <polygon points={`${x + rr * 1.75},${c.y} ${x + rr * 0.4},${c.y - rr * 0.95} ${x + rr * 0.4},${c.y + rr * 0.95}`} fill="#000000" />
+            <RefBubble c={c} r={rr} n={refs.section.n} sheet={refs.section.sheet} />
+          </g>
+        );
+      })()}
+      {withRefs && refs?.detail && (() => {
+        // detail marker: the area drawn larger, dashed, with a leader to its bubble
+        const d = refs.detail;
+        const pad = rr * 0.25;
+        const x0 = d.x0 - pad, x1 = d.x1 + pad, y0 = Y(d.z1) - pad, y1 = Y(d.z0) + pad;
+        let cx = (x0 + x1) / 2;
+        if (refs.section && Math.abs(cx - refs.section.s) < rr * 4.2) cx = refs.section.s + (cx < refs.section.s ? -1 : 1) * rr * 4.2;
+        cx = Math.max(-ML + rr * 1.2, Math.min(L + MR - rr * 1.2, cx));
+        const c = { x: cx, y: rowY };
+        return (
+          <g>
+            <rect x={x0} y={y0} width={x1 - x0} height={y1 - y0} rx={pad} fill="none" stroke="#000000" strokeWidth={rr * 0.05} strokeDasharray={`${rr * 0.35} ${rr * 0.2}`} />
+            <polyline points={`${(x0 + x1) / 2},${y1} ${(x0 + x1) / 2},${c.y - rr * 1.6} ${c.x},${c.y - rr}`} fill="none" stroke="#000000" strokeWidth={rr * 0.05} />
+            <RefBubble c={c} r={rr} n={d.n} sheet={d.sheet} />
+          </g>
+        );
+      })()}
 
       {print ? null : (
         <text x={0} y={H + MB - fs * 0.3} fontSize={fs} textAnchor="start" fill="#1A1D1F" fontWeight={700} letterSpacing={fs * 0.08}>

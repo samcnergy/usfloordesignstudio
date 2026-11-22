@@ -130,9 +130,9 @@ export function planBox(design: DesignData, fs?: number, tiers?: number): { x: n
 }
 
 /** Elevation markers for the printed plan: which wall each looks at and its number (north wall first, clockwise). */
-export type ElevationMark = { wallId: string; n: number };
+export type ElevationMark = { wallId: string; n: number; sheet?: string };
 
-export function PlanView({ design, catalog, selectedId, selectedIds, problemIds, onTargetDown, onBackgroundDown, className, selectedRun, box, print, marks, room, mep, finish, demo, counter }: ViewProps & {
+export function PlanView({ design, catalog, selectedId, selectedIds, problemIds, onTargetDown, onBackgroundDown, className, selectedRun, box, print, marks, room, mep, finish, demo, counter, cut }: ViewProps & {
   selectedRun?: string | null; box?: { x0: number; y0: number; x1: number; y1: number } | null;
   /** On the printed plan: the elevation markers and the room's name and ceiling height. */
   marks?: ElevationMark[]; room?: { name: string; ceiling: string };
@@ -147,6 +147,8 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
   demo?: { keys: Map<string, string> };
   /** The countertop plan: work surfaces, sink cutouts and faucet holes, range openings; cabinets very light, no appliances. */
   counter?: { spec?: SinkSpec; mount?: string };
+  /** The cutting plane of the cabinet section: across the counter at `s` along the run, looking along the run. */
+  cut?: { run: string; s: number; n: number; sheet: string };
 }) {
   const isSelected = (id: string) => (selectedIds ? selectedIds.has(id) : selectedId === id);
   const t = design.room.wallThickness;
@@ -263,8 +265,12 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
         return d;
       };
       const at = (s: number) => pointOn(w, s, reachAt(s) + r * 1.6);
+      // the section cut's bubble, so the elevation marker does not sit beside another "1"
+      const cutF = cut ? frames.get(cut.run) : null;
+      const cutBubble = cut && cutF ? pointOn(cutF, cut.s, Math.max(24, ...design.items.filter((i) => i.run === cut.run && i.offset <= cut.s && cut.s <= i.offset + i.width).map((i) => i.depth)) + r * 1.6) : null;
       const clear = (p: { x: number; y: number }) =>
-        [...markerCenters.values()].every((c) => Math.hypot(c.x - p.x, c.y - p.y) >= r * 2.4) && islandDims.every((seg) => segDist(p, seg) >= r * 1.4);
+        [...markerCenters.values()].every((c) => Math.hypot(c.x - p.x, c.y - p.y) >= r * 2.4) && islandDims.every((seg) => segDist(p, seg) >= r * 1.4)
+        && (!cutBubble || Math.hypot(cutBubble.x - p.x, cutBubble.y - p.y) >= r * 4.5);
       let best: { x: number; y: number } | null = null;
       let bestScore = Infinity;
       for (let s0 = r * 1.5; s0 <= w.length - r * 1.5; s0 += r * 0.5) {
@@ -652,6 +658,31 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
           </g>
         );
       })}
+      {print && cut && (() => {
+        // the cutting plane: from the wall out past the cabinets, the tail at the wall, the bubble out in the room with its arrow
+        const f = frames.get(cut.run);
+        if (!f) return null;
+        const r = print.scale * 0.3125;
+        const depth = Math.max(24, ...design.items.filter((i) => i.run === cut.run && i.offset <= cut.s && cut.s <= i.offset + i.width).map((i) => i.depth));
+        const a = pointOn(f, cut.s, -t);
+        const end = pointOn(f, cut.s, depth + r * 0.6);
+        const c = pointOn(f, cut.s, depth + r * 1.6);
+        const tip = { x: c.x + f.u.x * r * 1.75, y: c.y + f.u.y * r * 1.75 };
+        const b0 = { x: c.x + f.u.x * r * 0.4 + f.n.x * r * 0.95, y: c.y + f.u.y * r * 0.4 + f.n.y * r * 0.95 };
+        const b1 = { x: c.x + f.u.x * r * 0.4 - f.n.x * r * 0.95, y: c.y + f.u.y * r * 0.4 - f.n.y * r * 0.95 };
+        const tail = { x: a.x + f.u.x * r * 0.8, y: a.y + f.u.y * r * 0.8 };
+        return (
+          <g>
+            <line x1={a.x} y1={a.y} x2={end.x} y2={end.y} stroke="#000000" strokeWidth={0.7} strokeDasharray={`${fs * 1.4} ${fs * 0.4}`} />
+            <line x1={a.x} y1={a.y} x2={tail.x} y2={tail.y} stroke="#000000" strokeWidth={1.4} />
+            <polygon points={pointsAttr([tip, b0, b1])} fill="#000000" />
+            <circle cx={c.x} cy={c.y} r={r} fill="#FFFFFF" stroke="#000000" strokeWidth={0.6} />
+            <line x1={c.x - r} x2={c.x + r} y1={c.y} y2={c.y} stroke="#000000" strokeWidth={0.4} />
+            <text x={c.x} y={c.y - r * 0.22} fontSize={r * 0.85} textAnchor="middle" fontWeight={700}>{cut.n}</text>
+            <text x={c.x} y={c.y + r * 0.62} fontSize={r * 0.42} textAnchor="middle">{cut.sheet}</text>
+          </g>
+        );
+      })()}
       {print && marks?.map((m) => {
         if (!markerCenter(m.wallId)) return null;
         // Elevation marker: a 5/8" circle with a filled arrow pointing at the wall it looks at, numbered from the north wall clockwise.
@@ -666,9 +697,18 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
           <g key={`mark-${m.wallId}`}>
             <polygon points={pointsAttr([tip, { x: baseC.x + side.x, y: baseC.y + side.y }, { x: baseC.x - side.x, y: baseC.y - side.y }])} fill="#1A1D1F" />
             <circle cx={c.x} cy={c.y} r={r} fill="#FFFFFF" stroke="#1A1D1F" strokeWidth={0.6} />
-            <text x={c.x} y={c.y + r * 0.36} fontSize={r * 1.05} textAnchor="middle" fontWeight={700} fill="#1A1D1F">
-              {m.n}
-            </text>
+            {m.sheet ? (
+              <>
+                {/* split bubble: the elevation number over the sheet it is drawn on; the separator stays level */}
+                <line x1={c.x - r} x2={c.x + r} y1={c.y} y2={c.y} stroke="#1A1D1F" strokeWidth={0.4} />
+                <text x={c.x} y={c.y - r * 0.22} fontSize={r * 0.85} textAnchor="middle" fontWeight={700} fill="#1A1D1F">{m.n}</text>
+                <text x={c.x} y={c.y + r * 0.62} fontSize={r * 0.42} textAnchor="middle" fill="#1A1D1F">{m.sheet}</text>
+              </>
+            ) : (
+              <text x={c.x} y={c.y + r * 0.36} fontSize={r * 1.05} textAnchor="middle" fontWeight={700} fill="#1A1D1F">
+                {m.n}
+              </text>
+            )}
           </g>
         );
       })}
@@ -682,6 +722,13 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
           ...(marks ?? []).map((m) => markerCenter(m.wallId)).filter((c): c is { x: number; y: number } => !!c),
           // on the MEP plan, the lights and other symbols out in the room
           ...(mep?.items ?? []).filter((m) => !m.wall).map((m) => ({ x: m.x, y: m.y })),
+          // the section cut's bubble and its arrow
+          ...(cut && frames.get(cut.run) && print ? (() => {
+            const f = frames.get(cut.run)!;
+            const r = print.scale * 0.3125;
+            const depth = Math.max(24, ...design.items.filter((i) => i.run === cut.run && i.offset <= cut.s && cut.s <= i.offset + i.width).map((i) => i.depth));
+            return [pointOn(f, cut.s, depth + r * 1.6), pointOn(f, cut.s + r * 1.5, depth + r * 1.6)];
+          })() : []),
         ];
         const options = [0, 0.12, -0.12, 0.18, -0.18, 0.24, -0.24, 0.3, -0.3].flatMap((fy) => [0, 0.2, -0.2].map((fx) => ({ x: mx + fx * (B.x1 - B.x0), y: my + fy * (B.y1 - B.y0) })));
         const rects = design.islands.filter((i) => design.items.some((x) => x.run === i.id)).map((i) => islandRect(design, i));

@@ -13,11 +13,12 @@
 // photos. 11x17 is the standard sheet; Letter is for quick handouts.
 
 import { Brand } from "@/components/Brand";
-import { ElevationView, elevationPaperSize } from "@/components/drawing/ElevationView";
+import { ElevationView, elevationPaperSize, type ElevationRefs } from "@/components/drawing/ElevationView";
+import { counterRuns } from "@/lib/countertop";
 import { PlanView, planBox, type ElevationMark } from "@/components/drawing/PlanView";
 import { View3D, DEFAULT_CAMERA } from "@/components/drawing/View3D";
 import { roomShape } from "@/lib/geometry";
-import { COUNTER_STYLES, DROP_DOOR } from "@/lib/plan";
+import { BASE_TOP, COUNTER_STYLES, DROP_DOOR } from "@/lib/plan";
 import { needsDemoPlan, newOpeningKeys } from "@/lib/demo";
 import { CabinetSection, EdgeDetail, sectionRun } from "@/components/drawing/Details";
 import { GROUP_NAME, GROUP_ORDER, MEP_KINDS, TAG_MEANING, mepKey, mepOf, type MepItem, type MepSpec } from "@/lib/mep";
@@ -103,6 +104,25 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
       return b.width / s.k <= planSpace.width && b.height / s.k <= planSpace.height;
     }) ?? fitScale(box.width, box.height, planSpace);
 
+  // ---------- the section and detail references (K&B drawing standards, Chapter 4) ----------
+  // The cabinet section (ID-5.02, drawing 1) is cut through a base cabinet; its marker goes on that wall's
+  // elevation and its cutting plane on the floor plan. The countertop edge (ID-5.01, drawing 2) is marked
+  // on the same elevation, around the counter edge.
+  const cut = sectionRun(design);
+  const hasCounters = design.items.some((i) => i.mountHeight === 0 && COUNTER_STYLES.has(i.style));
+  const ctSheet = sheetId(5, 1);
+  const secSheet = sheetId(5, 2);
+  const counterThick = (catalog.countertops.find((c) => c.id === design.countertopId) ?? catalog.countertops[0])?.thickness ?? 1.5;
+  const refsFor = (run: string): ElevationRefs | undefined => {
+    if (!cut || run !== cut.run) return undefined;
+    const spans = counterRuns(design, run);
+    const first = spans[0];
+    return {
+      section: { s: cut.base.offset + cut.base.width / 3, n: 1, sheet: secSheet },
+      ...(hasCounters && first ? { detail: { x0: first[0] - 1, x1: first[0] + 10, z0: BASE_TOP - 3, z1: BASE_TOP + counterThick + 3, n: 2, sheet: ctSheet } } : {}),
+    };
+  };
+
   // ---------- elevations: the north wall first, then clockwise, then islands ----------
   const walls = wallsFromNorth(design, shape.walls).filter(
     (w) => design.items.some((i) => i.run === w.id) || design.openings.some((o) => o.wall === w.id),
@@ -121,9 +141,10 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
   const runs = [...walls.map((w) => w.id), ...design.islands.filter((i) => design.items.some((x) => x.run === i.id)).map((i) => i.id)];
   const elevSpace = { width: area.width, height: area.height - MARKER };
   const elevations: Elevation[] = runs.flatMap((run, i) => {
-    const fits = SCALES.map((s) => ({ s, size: elevationPaperSize(design, run, s.k, s.k * 0.13) }))
+    const withRefs = !!refsFor(run);
+    const fits = SCALES.map((s) => ({ s, size: elevationPaperSize(design, run, s.k, s.k * 0.13, withRefs) }))
       .find((x) => x.size && x.size.width <= elevSpace.width && x.size.height <= elevSpace.height);
-    const pick = fits ?? { s: SCALES[SCALES.length - 1], size: elevationPaperSize(design, run, SCALES[SCALES.length - 1].k, SCALES[SCALES.length - 1].k * 0.13) };
+    const pick = fits ?? { s: SCALES[SCALES.length - 1], size: elevationPaperSize(design, run, SCALES[SCALES.length - 1].k, SCALES[SCALES.length - 1].k * 0.13, withRefs) };
     if (!pick.size) return [];
     return [{ run, n: i + 1, title: elevTitles.get(run) ?? run, scale: pick.s, width: pick.size.width, height: pick.size.height + MARKER }];
   });
@@ -153,7 +174,11 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
     if (row.length) rows.push(row);
     if (rows.length) elevationSheets.push(rows);
   }
-  const marks: ElevationMark[] = elevations.filter((e) => shape.walls.some((w) => w.id === e.run)).map((e) => ({ wallId: e.run, n: e.n }));
+  // which sheet each elevation is drawn on, for the split bubbles that point to it
+  const elevSheet = new Map<string, string>();
+  elevationSheets.forEach((rows, si) => rows.flat().forEach((e) => elevSheet.set(e.run, sheetId(2, si + 1))));
+  const marks: ElevationMark[] = elevations.filter((e) => shape.walls.some((w) => w.id === e.run)).map((e) => ({ wallId: e.run, n: e.n, sheet: elevSheet.get(e.run) }));
+  const refSheet = cut ? elevSheet.get(cut.run) : undefined;
 
   // ---------- the cabinet schedule, as many sheets as it needs ----------
   const perSheet = paper === "tabloid" ? 30 : 18;
@@ -195,13 +220,14 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
       <div className="ds-plan">
         <div className="ds-plan-draw">
           <PlanView design={design} catalog={catalog} print={{ scale: planScale.k }} marks={marks}
+            cut={cut ? { run: cut.run, s: cut.base.offset + cut.base.width / 3, n: 1, sheet: secSheet } : undefined}
             room={{ name: room, ceiling: `CLG. HT. ${fmtIn(design.room.ceiling)}` }} />
           <TitleMarker n={1} title={`${room.toUpperCase()} FLOOR PLAN`} scale={planScale.label} />
         </div>
         <aside className="ds-plan-side" style={{ width: `${notesWidth}in` }}>
           <div className="ds-north"><NorthArrow angle={northAngle(design)} /></div>
           <h4>Legend</h4>
-          <PlanLegend />
+          <PlanLegend section={!!cut} />
           <h4>Plan notes</h4>
           <ol>{planNotes.map((n, i) => <li key={i}>{n}</li>)}</ol>
           <p className="ds-small">Cabinet codes are the manufacturer&apos;s order codes. See the cabinet schedule, {sheetId(1, 2)}.</p>
@@ -290,7 +316,7 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
           <div className="ds-elev-row" key={ri}>
             {r.map((e) => (
               <div className="ds-elev-cell" key={e.run}>
-                <ElevationView design={design} catalog={catalog} run={e.run} print={{ scale: e.scale.k }} />
+                <ElevationView design={design} catalog={catalog} run={e.run} print={{ scale: e.scale.k }} refs={refsFor(e.run)} />
                 <TitleMarker n={e.n} sheetRef={planId} title={e.title} scale={e.scale.label} />
               </div>
             ))}
@@ -401,7 +427,6 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
   }
 
   // ---------- the countertop plan, with the edge detail beside it ----------
-  const hasCounters = design.items.some((i) => i.mountHeight === 0 && COUNTER_STYLES.has(i.style));
   if (hasCounters) {
     const fin = finishesOf(design);
     const sink = fin.sink ?? {};
@@ -422,7 +447,7 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
       "Fabricator templates after the cabinets are set and level; verify all sizes in the field.",
     ];
     add({
-      id: sheetId(5, 1), title: `${room} Countertop Plan`, scale: ctScale.label,
+      id: ctSheet, title: `${room} Countertop Plan`, scale: ctScale.label,
       body: (
         <div className="ds-plan">
           <div className="ds-plan-draw">
@@ -436,7 +461,7 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
             <ol>{ctNotes.map((n, i) => <li key={i}>{n}</li>)}</ol>
             <h4>Edge detail</h4>
             <EdgeDetail scale={4} thickness={thick} edge={fin.counterEdge ?? null} />
-            <TitleMarker n={2} title="COUNTERTOP EDGE DETAIL" scale={'3" = 1\'-0"'} />
+            <TitleMarker n={2} sheetRef={refSheet} title="COUNTERTOP EDGE DETAIL" scale={'3" = 1\'-0"'} />
           </aside>
         </div>
       ),
@@ -444,7 +469,6 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
   }
 
   // ---------- details: the typical cabinet section ----------
-  const cut = sectionRun(design);
   if (cut) {
     const DETAIL_SCALES: Scale[] = [
       { k: 8, label: '1 1/2" = 1\'-0"' }, { k: 12, label: '1" = 1\'-0"' }, { k: 16, label: '3/4" = 1\'-0"' }, { k: 24, label: '1/2" = 1\'-0"' },
@@ -456,13 +480,13 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
     const wallName = shape.walls.find((w) => w.id === cut.run)?.label;
     const secTitle = `TYPICAL CABINET SECTION${wallName ? ` AT ${wallName.toUpperCase()}` : ""}`;
     add({
-      id: sheetId(5, 2), title: "Details", scale: secScale.label,
+      id: secSheet, title: "Details", scale: secScale.label,
       body: (
         <div className="ds-details">
           <div className="ds-elev-cell">
             <CabinetSection design={design} scale={secScale.k} counter={counter ? { name: counter.name, thickness: counter.thickness ?? 1.5 } : null}
               splash={fin.uses.backsplash ? fkeys.backsplash ?? null : null} floorKey={fin.uses.floor ? fkeys.floor ?? null : null} />
-            <TitleMarker n={1} title={secTitle} scale={secScale.label} />
+            <TitleMarker n={1} sheetRef={refSheet} title={secTitle} scale={secScale.label} />
           </div>
         </div>
       ),
@@ -718,7 +742,7 @@ function MepSchedules({ items, specs, room, sheet, parts }: { items: MepItem[]; 
 }
 
 /** The plan legend: the line types and symbols used on the plan (K&B drawing standards: a legend on every plan). */
-function PlanLegend() {
+function PlanLegend({ section }: { section?: boolean }) {
   const row = (key: string, sample: React.ReactNode, text: string) => (
     <div className="ds-legend-row" key={key}>
       <svg width="0.55in" height="0.2in" viewBox="0 0 30 11" aria-hidden="true">{sample}</svg>
@@ -735,6 +759,7 @@ function PlanLegend() {
       {row("door", <><line x1={4} x2={4} y1={1} y2={10} stroke="#000" strokeWidth={0.8} /><path d="M 4 1 A 9 9 0 0 1 13 10" fill="none" stroke="#000" strokeWidth={0.5} strokeDasharray="1.5 1" /></>, "Door and its swing")}
       {row("mark", <><polygon points="15,0.5 18,4 12,4" fill="#000" /><circle cx={15} cy={7} r={3.6} fill="#FFF" stroke="#000" strokeWidth={0.6} /><text x={15} y={8.6} fontSize={4.2} textAnchor="middle" fontWeight={700}>1</text></>, "Elevation marker: the arrow points at the wall drawn")}
       {row("code", <text x={15} y={7.5} fontSize={6} textAnchor="middle" fontWeight={700}>B24</text>, "Cabinet code, listed in the cabinet schedule")}
+      {section && row("cut", <><line x1={1} x2={14} y1={5.5} y2={5.5} stroke="#000" strokeWidth={0.7} strokeDasharray="3 1" /><line x1={1} x2={1} y1={3} y2={8} stroke="#000" strokeWidth={1.4} /><polygon points="27,5.5 21,2.5 21,8.5" fill="#000" /><circle cx={19} cy={5.5} r={4.2} fill="#FFF" stroke="#000" strokeWidth={0.5} /><line x1={14.8} x2={23.2} y1={5.5} y2={5.5} stroke="#000" strokeWidth={0.4} /></>, "Section cut: the arrow points the way the section looks; drawing number over its sheet")}
     </div>
   );
 }

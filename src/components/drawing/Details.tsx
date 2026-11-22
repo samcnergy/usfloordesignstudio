@@ -133,20 +133,20 @@ export function EdgeDetail({ scale, thickness, edge }: { scale: number; thicknes
       default: return `M 0 0 L ${front - r * 0.3} 0 Q ${front} 0 ${front} ${r * 0.3} L ${front} ${t} L 0 ${t} Z`; // eased
     }
   })();
-  const W = 6;
+  const W = 5; // 2" of cabinet behind the face is enough to read the edge
   const Hh = t + 5;
   return (
-    <svg viewBox={`${-3} ${-fs * 2.5} ${W + fs * 8} ${Hh + fs * 4}`} style={{ width: `${(W + fs * 8) / scale}in`, height: `${(Hh + fs * 4) / scale}in`, display: "block" }}
+    <svg viewBox={`${-2} ${-fs * 2.5} ${W + fs * 8} ${Hh + fs * 4}`} style={{ width: `${(W + fs * 8) / scale}in`, height: `${(Hh + fs * 4) / scale}in`, display: "block" }}
       fontFamily="'Source Sans 3', Helvetica, Arial, sans-serif">
       {/* the slab */}
       <path d={shape} fill="#E6E6E6" stroke={INK} strokeWidth={0.06} />
       {edge === "mitered" && <line x1={front - t} y1={t} x2={front} y2={0} stroke={INK} strokeWidth={0.04} />}
       {/* the case side and the door below it */}
-      <rect x={-3} y={t} width={3 + 1 - 0.0} height={5} fill="none" stroke={INK} strokeWidth={0.05} />
+      <rect x={-2} y={t} width={3} height={5} fill="none" stroke={INK} strokeWidth={0.05} />
       <rect x={1} y={t + 0.1} width={0.75} height={4.9} fill="#FFFFFF" stroke={INK} strokeWidth={0.05} />
       <DimH x0={1.75} x1={front} y={-fs * 1.1} fs={fs * 0.8} w={0.2} />
       <DimV y0={0} y1={t} x={front + fs * 2.2} fs={fs * 0.8} w={0.2} />
-      <text x={-2.8} y={-fs * 1.6} fontSize={fs * 0.8} fill={INK}>{(edge ?? "eased").toUpperCase()} EDGE</text>
+      <text x={-1.8} y={-fs * 1.6} fontSize={fs * 0.8} fill={INK}>{(edge ?? "eased").toUpperCase()} EDGE</text>
       <text x={1.4} y={t + 4.6} fontSize={fs * 0.7} fill={INK} transform={`rotate(-90 1.4 ${t + 4.6})`}>DOOR</text>
     </svg>
   );
