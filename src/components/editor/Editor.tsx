@@ -14,6 +14,7 @@ import type { Paper } from "@/lib/sheets";
 import { fillLine, fillWall } from "@/lib/fill";
 import { KitchenWizard } from "./KitchenWizard";
 import { MepPanel } from "./MepPanel";
+import { DEMO_ITEMS } from "@/lib/demo";
 import { FinishPanel } from "./FinishPanel";
 import { mepOf, mepPoint, moveMep, type MepItem } from "@/lib/mep";
 import {
@@ -1138,6 +1139,24 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
               <button className="btn btn-secondary" onClick={addIsland}>
                 Add island
               </button>
+              <h3 className="cat-title">Demolition: what comes out</h3>
+              <p className="muted">Ticked items print on the demolition and construction plan, with the new walls, new doors and windows, and the blocking for the wall cabinets.</p>
+              {DEMO_ITEMS.map((x) => (
+                <label key={x} className="wiz-check">
+                  <input type="checkbox" checked={design.demo?.remove.includes(x) ?? false}
+                    onChange={(e) => apply((d) => {
+                      const now = new Set(d.demo?.remove ?? []);
+                      if (e.target.checked) now.add(x); else now.delete(x);
+                      return { ...d, demo: { ...(d.demo ?? {}), remove: DEMO_ITEMS.filter((y) => now.has(y)) } };
+                    })} />
+                  {x}
+                </label>
+              ))}
+              <label className="field">
+                <span className="field-label">Other demolition notes</span>
+                <textarea className="input" rows={3} value={design.demo?.notes ?? ""}
+                  onChange={(e) => apply((d) => ({ ...d, demo: { remove: d.demo?.remove ?? [], notes: e.target.value } }))} />
+              </label>
             </div>
           )}
 
@@ -1724,6 +1743,16 @@ function OpeningInspector({ op, design, update, remove }: { op: Opening; design:
         <LengthInput id="op-w" label="Width" value={op.width} min={6} max={len} onChange={(v) => update({ width: v })} />
         <LengthInput id="op-h" label="Height" value={op.height} min={6} max={design.room.ceiling} onChange={(v) => update({ height: v })} />
         {op.type === "window" && <LengthInput id="op-s" label="Floor to sill" value={op.sill} min={0} max={design.room.ceiling} onChange={(v) => update({ sill: v })} />}
+      </div>
+      <div className="field">
+        <span className="field-label">For the construction plan</span>
+        <div className="chips">
+          {(["existing", "new"] as const).map((st) => (
+            <button key={st} className={`chip ${(op.status ?? "existing") === st ? "chip-on" : ""}`} onClick={() => update({ status: st === "existing" ? undefined : st })}>
+              {st === "existing" ? "Existing, stays" : "New"}
+            </button>
+          ))}
+        </div>
       </div>
       {op.type === "door" && (
         <div className="field">

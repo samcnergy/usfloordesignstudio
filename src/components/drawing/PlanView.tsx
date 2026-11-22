@@ -15,12 +15,13 @@ import { DimAligned, DimChain } from "./dims";
 import { MepLayer } from "./MepSymbols";
 import { BacksplashTags, FinishCross, FloorPattern } from "./FinishSymbols";
 import type { FinishData, FinishUse } from "@/lib/finishes";
+import { blockingSpans } from "@/lib/demo";
 import { MEP_KINDS, type MepItem } from "@/lib/mep";
 import { BASE_TOP, COUNTER_STYLES, CENTERLINE_STYLES, DROP_DOOR, applianceDoors, centerlines, counterOutlines, openingStops, planLine, planTiers } from "@/lib/plan";
 import type { DrawTarget, ViewProps } from "./ElevationView";
 import { PROBLEM, PaintDefs, SELECT, finishPaint, monoPaint } from "./paint";
 
-function OpeningPlan({ op, frame, t }: { op: Opening; frame: RunFrame; t: number }) {
+function OpeningPlan({ op, frame, t, solid }: { op: Opening; frame: RunFrame; t: number; solid?: boolean }) {
   const s0 = op.offset;
   const s1 = op.offset + op.width;
   const cut = pointsAttr(runQuad(frame, s0, s1, -t, 0));
@@ -45,7 +46,14 @@ function OpeningPlan({ op, frame, t }: { op: Opening; frame: RunFrame; t: number
     const sweep = ax * by - ay * bx > 0 ? 1 : 0;
     elems.push(
       <line key="leaf" x1={p.x} y1={p.y} x2={leaf.x} y2={leaf.y} stroke="#1A1D1F" strokeWidth={0.6} />,
-      <path key="arc" d={`M ${leaf.x} ${leaf.y} A ${op.width} ${op.width} 0 0 ${sweep} ${jamb.x} ${jamb.y}`} fill="none" stroke="#1A1D1F" strokeWidth={0.3} strokeDasharray="1.5 1" />,
+      <path key="arc" d={`M ${leaf.x} ${leaf.y} A ${op.width} ${op.width} 0 0 ${sweep} ${jamb.x} ${jamb.y}`} fill="none" stroke="#1A1D1F" strokeWidth={solid ? 0.35 : 0.3} strokeDasharray={solid ? undefined : "1.5 1"} />,
+    );
+  }
+  if (solid && op.type !== "opening") {
+    // door and window casing on the room side, each side of the opening (K&B drawing standards)
+    elems.push(
+      <polygon key="cas0" points={pointsAttr(runQuad(frame, s0 - 2.5, s0, 0, 0.75))} fill="#FFFFFF" stroke="#1A1D1F" strokeWidth={0.25} />,
+      <polygon key="cas1" points={pointsAttr(runQuad(frame, s1, s1 + 2.5, 0, 0.75))} fill="#FFFFFF" stroke="#1A1D1F" strokeWidth={0.25} />,
     );
   }
   return <g>{elems}</g>;
@@ -122,7 +130,7 @@ export function planBox(design: DesignData, fs?: number, tiers?: number): { x: n
 /** Elevation markers for the printed plan: which wall each looks at and its number (north wall first, clockwise). */
 export type ElevationMark = { wallId: string; n: number };
 
-export function PlanView({ design, catalog, selectedId, selectedIds, problemIds, onTargetDown, onBackgroundDown, className, selectedRun, box, print, marks, room, mep, finish }: ViewProps & {
+export function PlanView({ design, catalog, selectedId, selectedIds, problemIds, onTargetDown, onBackgroundDown, className, selectedRun, box, print, marks, room, mep, finish, demo }: ViewProps & {
   selectedRun?: string | null; box?: { x0: number; y0: number; x1: number; y1: number } | null;
   /** On the printed plan: the elevation markers and the room's name and ceiling height. */
   marks?: ElevationMark[]; room?: { name: string; ceiling: string };
@@ -133,11 +141,13 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
   mep?: { items: MepItem[]; selectedId?: string | null; onDown?: (e: ReactPointerEvent<SVGElement>, id: string) => void };
   /** The finish plan: no codes or fixture dimensions, the floor pattern, the finish symbol and the countertop extents. */
   finish?: { data: FinishData; keys: Partial<Record<FinishUse, string>>; counterThick: number };
+  /** The demolition and construction plan: wall status, new openings with their keys, wall blocking; no cabinets. */
+  demo?: { keys: Map<string, string> };
 }) {
   const isSelected = (id: string) => (selectedIds ? selectedIds.has(id) : selectedId === id);
   const t = design.room.wallThickness;
   const shape = roomShape(design.room);
-  const frameBox = planBox(design, print ? print.scale * 0.12 : undefined, print && mep ? mepTiers(design, mep.items) : print && finish ? 1 : undefined);
+  const frameBox = planBox(design, print ? print.scale * 0.12 : undefined, print && mep ? mepTiers(design, mep.items) : print && finish ? 1 : print && demo ? 3 : undefined);
   const fs = frameBox.fs;
   const mono = !!print;
   const frames = new Map(allFrames(design).map((f) => [f.id, f]));
@@ -277,6 +287,12 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
     >
       <PaintDefs catalog={catalog} />
       <defs>
+        <pattern id="newwall" patternUnits="userSpaceOnUse" width={3} height={3} patternTransform="rotate(45)">
+          <line x1={0} y1={0} x2={0} y2={3} stroke="#000000" strokeWidth={0.35} />
+        </pattern>
+        <pattern id="blocking" patternUnits="userSpaceOnUse" width={2} height={2}>
+          <path d="M 0 0 L 2 2 M 2 0 L 0 2" stroke="#000000" strokeWidth={0.2} />
+        </pattern>
         <pattern id="floorgrid" patternUnits="userSpaceOnUse" width={12} height={12}>
           <path d="M 12 0 L 0 0 0 12" fill="none" stroke="#E4E2DC" strokeWidth={0.2} />
         </pattern>
@@ -293,6 +309,14 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
 
       {shape.walls.map((w) => {
         const band = pointsAttr([w.origin, w.end, w.outerEnd, w.outerStart]);
+        const status = design.room.walls.find((x) => x.id === w.id)?.status;
+        if (print && demo) {
+          // existing walls in outline, new ones hatched, a wall coming out light and dashed (K&B drawing standards, Chapter 9)
+          if (w.open) return status === "removed"
+            ? <polygon key={w.id} points={band} fill="none" stroke="#6D7276" strokeWidth={0.3} strokeDasharray={`${fs * 0.6} ${fs * 0.4}`} />
+            : <line key={w.id} x1={w.origin.x} y1={w.origin.y} x2={w.end.x} y2={w.end.y} stroke="#6D7276" strokeWidth={0.3} strokeDasharray="3 2" />;
+          return <polygon key={w.id} points={band} fill={status === "new" ? "url(#newwall)" : "#FFFFFF"} stroke="#000000" strokeWidth={0.45} />;
+        }
         return (
           <g key={w.id} onPointerDown={down({ kind: "wall", id: w.id })} style={{ cursor: onTargetDown ? "pointer" : undefined }}>
             {w.open ? (
@@ -318,7 +342,19 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
         return (
           <g key={op.id} onPointerDown={down({ kind: "opening", id: op.id })} style={{ cursor: onTargetDown ? "grab" : undefined }}>
             <polygon points={hit} fill="transparent" />
-            <OpeningPlan op={op} frame={frame} t={t} />
+            <OpeningPlan op={op} frame={frame} t={t} solid={!!(print && demo)} />
+            {print && demo?.keys.get(op.id) && (() => {
+              // a new door or window: the hexagonal key, inside the room in front of it
+              const c = pointOn(frame, op.offset + op.width / 2, op.type === "door" ? Math.min(op.width * 0.45, 16) : fs * 2.6);
+              const r = fs * 1.15;
+              const hex = Array.from({ length: 6 }, (_, k) => ({ x: c.x + r * Math.cos((Math.PI / 3) * k), y: c.y + r * Math.sin((Math.PI / 3) * k) }));
+              return (
+                <g>
+                  <polygon points={pointsAttr(hex)} fill="#FFFFFF" stroke="#000000" strokeWidth={0.35} />
+                  <text x={c.x} y={c.y + fs * 0.3} fontSize={fs * 0.8} textAnchor="middle" fontWeight={700}>{demo.keys.get(op.id)}</text>
+                </g>
+              );
+            })()}
             {(selected || problem) && (
               <polygon points={pointsAttr(runQuad(frame, op.offset, op.offset + op.width, -t - 0.6, 0.6))} fill="none" stroke={selected ? SELECT : PROBLEM} strokeWidth={1.1} />
             )}
@@ -346,7 +382,16 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
         );
       })}
 
-      {finish ? (
+      {print && demo ? (
+        <g>
+          {/* blocking in the wall for the wall cabinets and hood; no cabinets on the construction plan */}
+          {blockingSpans(design).map((b, i) => {
+            const f = frames.get(b.wall);
+            if (!f) return null;
+            return <polygon key={`blk-${i}`} points={pointsAttr(runQuad(f, b.s0, b.s1, -1.5, 0))} fill="url(#blocking)" stroke="#000000" strokeWidth={0.2} />;
+          })}
+        </g>
+      ) : finish ? (
         <g style={{ pointerEvents: "none" }}>
           {/* cabinets and appliances light, the work surfaces in a medium line */}
           {design.items.map((it) => {
@@ -412,7 +457,30 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
         return (
           <g key={`tag-${w.id}`}>
             {/* one unit on a drawing: inches and fractions on the printed plan (K&B drawing standards) */}
-            {print && finish ? (() => {
+            {print && demo ? (() => {
+              // only the changes: new openings by their centerlines from the corner, the blocking, and a new wall's length
+              const o = { x: -w.n.x, y: -w.n.y };
+              const tiers: React.ReactNode[] = [];
+              const step = fs * 1.4;
+              let d = t + step;
+              const fresh = design.openings.filter((op) => op.wall === w.id && op.status === "new");
+              if (fresh.length) {
+                const centers = new Map<number, { x: number; y: number }>();
+                for (const op of fresh) {
+                  const c = op.offset + op.width / 2;
+                  centers.set(Math.round(c * 1000) / 1000, pointOn(w, c, 0));
+                }
+                tiers.push(<DimChain key="cl" origin={w.origin} u={w.u} o={o} d={d} stops={[0, ...centers.keys(), w.length]} fs={fs * 0.8} from={t} centers={centers} />);
+                d += step;
+              }
+              const blk = blockingSpans(design).filter((b) => b.wall === w.id);
+              if (blk.length) {
+                tiers.push(<DimChain key="blk" origin={w.origin} u={w.u} o={o} d={d} stops={[0, ...blk.flatMap((b) => [b.s0, b.s1]), w.length]} fs={fs * 0.8} from={t} />);
+                d += step;
+              }
+              if (design.room.walls.find((x) => x.id === w.id)?.status === "new") tiers.push(<DimChain key="all" origin={w.origin} u={w.u} o={o} d={d} stops={[0, w.length]} fs={fs * 0.8} from={t} />);
+              return tiers;
+            })() : print && finish ? (() => {
               // the finish plan dimensions only the work surfaces: where each counter starts and stops
               const spans = counterSpans(design, w.id);
               if (w.open || !spans.length) return null;
@@ -477,7 +545,7 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
           </g>
         );
       })}
-      {!finish && dimIslands.map((isl) => {
+      {!finish && !demo && dimIslands.map((isl) => {
         // an island is located from the walls in two directions, with the centerlines of any fixture on it
         const on = design.items.filter((i) => i.run === isl.id);
         const r = islandRect(design, isl);

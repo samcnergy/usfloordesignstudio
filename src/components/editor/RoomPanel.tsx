@@ -235,6 +235,13 @@ export function RoomPanel({
                     <input type="checkbox" checked={!!w.open} onChange={(e) => setWall(w.id, { open: e.target.checked || undefined })} />
                     Open, no wall
                   </label>
+                  {/* for the demolition and construction plan */}
+                  <select className="input input-small" value={w.status ?? "existing"} aria-label={`Wall ${g.letter}: existing, new or removed`}
+                    onChange={(e) => setWall(w.id, { status: e.target.value === "existing" ? undefined : (e.target.value as "new" | "removed") })}>
+                    <option value="existing">Existing wall</option>
+                    <option value="new">New wall, to build</option>
+                    {w.open && <option value="removed">Wall here now, to take out</option>}
+                  </select>
                   {i < N - 1 && (
                     <button className="btn btn-ghost btn-small" onClick={() => addAfter(i)} title="Add a wall after this one">
                       Add wall after

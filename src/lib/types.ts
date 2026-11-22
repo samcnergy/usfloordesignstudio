@@ -122,6 +122,8 @@ export interface Wall {
   // 90 is a normal corner, 270 the inside corner of an L, 135 an angled corner.
   corner: number;
   open?: boolean; // no wall here, the kitchen opens to another room
+  // For the demolition and construction plan: a wall built new, or (on an open side) an existing wall taken out.
+  status?: "existing" | "new" | "removed";
 }
 
 export interface Room {
@@ -159,6 +161,8 @@ export interface Opening {
   height: number;
   sill: number; // windows only, floor to bottom of window
   hinge: "left" | "right"; // doors only
+  // For the demolition and construction plan: an existing opening (the default) or a new one.
+  status?: "existing" | "new";
 }
 
 export interface PlacedItem {
@@ -229,6 +233,8 @@ export interface DesignData {
   mep?: import("./mep").MepData;
   // The finish plan and schedule (src/lib/finishes.ts). Missing: no finishes chosen.
   finishes?: import("./finishes").FinishData;
+  // The demolition and construction plan: what comes out, in plain words. Missing: nothing chosen.
+  demo?: { remove: string[]; notes?: string };
 }
 
 export interface DesignRecord {

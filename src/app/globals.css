@@ -450,3 +450,6 @@ textarea.input { resize: vertical; }
 .ds-key-list { list-style: none; padding-left: 0 !important; }
 .ds-dot { text-align: center; }
 .fin-size { width: 72px; }
+.input-small { min-height: 30px; padding: 2px 6px; font-size: 13px; width: auto; }
+.ds-table-tight { font-size: 6.5pt; }
+.ds-table-tight th, .ds-table-tight td { padding: 1px 3px; }

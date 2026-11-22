@@ -18,6 +18,7 @@ import { PlanView, planBox, type ElevationMark } from "@/components/drawing/Plan
 import { View3D, DEFAULT_CAMERA } from "@/components/drawing/View3D";
 import { roomShape } from "@/lib/geometry";
 import { DROP_DOOR } from "@/lib/plan";
+import { needsDemoPlan, newOpeningKeys } from "@/lib/demo";
 import { GROUP_NAME, GROUP_ORDER, MEP_KINDS, TAG_MEANING, mepKey, mepOf, type MepItem, type MepSpec } from "@/lib/mep";
 import { MepLegendGlyph } from "@/components/drawing/MepSymbols";
 import { FINISH_USES, MATERIAL_NAME, USE_NAME, finishKeys, finishQuantity, finishesOf, hasFinishes, type FinishData, type FinishUse } from "@/lib/finishes";
@@ -213,6 +214,71 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
     id: sheetId(1, 2 + pi), title: schedulePages.length > 1 ? `Cabinet Schedule (${pi + 1} of ${schedulePages.length})` : "Cabinet Schedule", scale: "None",
     body: <ScheduleTable rows={rows} empty={!schedule.length} />,
   }));
+
+  // ---------- the demolition and construction plan, right after the floor plan and its schedule ----------
+  if (needsDemoPlan(design)) {
+    const keys = newOpeningKeys(design);
+    const demoScale =
+      SCALES.find((s) => {
+        const b = planBox(design, s.k * 0.12, 3);
+        return b.width / s.k <= planSpace.width && b.height / s.k <= planSpace.height;
+      }) ?? fitScale(box.width, box.height, planSpace);
+    const removed = design.room.walls.some((w) => w.status === "removed");
+    const built = design.room.walls.some((w) => w.status === "new");
+    const fresh = design.openings.filter((o) => keys.has(o.id)).sort((a, b) => (keys.get(a.id) ?? "").localeCompare(keys.get(b.id) ?? "", undefined, { numeric: true }));
+    const demoNotes = [
+      "Read with the floor plan, the interior elevations and the MEP plan.",
+      ...(design.demo?.remove.length ? [`Remove: ${design.demo.remove.map((x) => x.replace(/^Existing /, "existing ").toLowerCase()).join("; ")}. Cap and protect the plumbing, gas and electrical left in place.`] : []),
+      ...(design.demo?.notes?.trim() ? [design.demo.notes.trim()] : []),
+      "Walls, doors and windows not marked stay. Protect them, the floors beyond the work area and anything staying.",
+      ...(removed || built ? ["Confirm with a structural engineer before altering any wall that may be load-bearing; the engineer's drawings join this set."] : []),
+      "New walls and openings are dimensioned from the finished drywall; new doors and windows by their centerlines from the corner.",
+      "Blocking in the wall behind every wall cabinet and the hood, the full run shown, for the cabinet hanging rail and screws.",
+      "Report any condition found that was hidden when the room was measured before going on.",
+    ];
+    const demoId = sheetId(1, 2 + schedulePages.length);
+    add({
+      id: demoId, title: `${room} Demolition and Construction Plan`, scale: demoScale.label,
+      body: (
+        <div className="ds-plan">
+          <div className="ds-plan-draw">
+            <PlanView design={design} catalog={catalog} print={{ scale: demoScale.k }} demo={{ keys }}
+              room={{ name: room, ceiling: `CLG. HT. ${fmtIn(design.room.ceiling)}` }} />
+            <TitleMarker n={1} title={`${room.toUpperCase()} DEMOLITION AND CONSTRUCTION PLAN`} scale={demoScale.label} />
+          </div>
+          <aside className="ds-plan-side ds-mep-side" style={{ width: `${notesWidth}in` }}>
+            <div className="ds-north"><NorthArrow angle={northAngle(design)} /></div>
+            <h4>Wall types</h4>
+            <div className="ds-legend">
+              <div className="ds-legend-row"><svg width="0.45in" height="0.2in" viewBox="0 0 22 10" aria-hidden="true"><rect x={1} y={2.5} width={20} height={5} fill="#FFF" stroke="#000" strokeWidth={0.6} /></svg><span>Existing wall, stays</span></div>
+              {built && <div className="ds-legend-row"><svg width="0.45in" height="0.2in" viewBox="0 0 22 10" aria-hidden="true"><defs><pattern id="lg-new" patternUnits="userSpaceOnUse" width={2} height={2} patternTransform="rotate(45)"><line x1={0} y1={0} x2={0} y2={2} stroke="#000" strokeWidth={0.4} /></pattern></defs><rect x={1} y={2.5} width={20} height={5} fill="url(#lg-new)" stroke="#000" strokeWidth={0.6} /></svg><span>New partition: 2x4 wood studs at 16&quot; o.c., 1/2&quot; gypsum board both sides (2x6 where it carries plumbing)</span></div>}
+              {removed && <div className="ds-legend-row"><svg width="0.45in" height="0.2in" viewBox="0 0 22 10" aria-hidden="true"><rect x={1} y={2.5} width={20} height={5} fill="none" stroke="#6D7276" strokeWidth={0.5} strokeDasharray="2 1.4" /></svg><span>Existing wall to be removed</span></div>}
+            </div>
+            <h4>Legend</h4>
+            <div className="ds-legend">
+              <div className="ds-legend-row"><svg width="0.45in" height="0.2in" viewBox="0 0 22 10" aria-hidden="true"><defs><pattern id="lg-blk" patternUnits="userSpaceOnUse" width={2} height={2}><path d="M 0 0 L 2 2 M 2 0 L 0 2" stroke="#000" strokeWidth={0.3} /></pattern></defs><rect x={1} y={3.5} width={20} height={3} fill="url(#lg-blk)" stroke="#000" strokeWidth={0.4} /></svg><span>Wall blocking for wall cabinets and the hood</span></div>
+              {fresh.length > 0 && <div className="ds-legend-row"><svg width="0.45in" height="0.2in" viewBox="0 0 22 10" aria-hidden="true"><polygon points="7,5 9.5,1 14.5,1 17,5 14.5,9 9.5,9" fill="#FFF" stroke="#000" strokeWidth={0.5} /></svg><span>New door (D) or window (W), see the schedule</span></div>}
+              <div className="ds-legend-row"><svg width="0.45in" height="0.2in" viewBox="0 0 22 10" aria-hidden="true"><line x1={1} x2={21} y1={6} y2={6} stroke="#000" strokeWidth={0.4} strokeDasharray="5 1.2 1.2 1.2" /><text x={11} y={4} fontSize={4} textAnchor="middle">{"\u2104"}</text></svg><span>Centerline</span></div>
+            </div>
+            <h4>Plan notes</h4>
+            <ol>{demoNotes.map((n, i) => <li key={i}>{n}</li>)}</ol>
+            {fresh.length > 0 && (
+              <>
+                <h4>Door and window schedule</h4>
+                <table className="ds-table ds-table-tight">
+                  <thead><tr><th>Key</th><th>Type</th><th>Size (W x H)</th><th>Sill AFF</th><th>Frame / hardware</th></tr></thead>
+                  <tbody>{fresh.map((o) => (
+                    <tr key={o.id}><td><b>{keys.get(o.id)}</b></td><td>{o.type === "door" ? `Door, hinged ${o.hinge}` : o.type === "window" ? "Window" : "Cased opening"}</td>
+                      <td className="tabular">{fmtIn(o.width)} x {fmtIn(o.height)}</td><td className="tabular">{o.type === "window" ? fmtIn(o.sill) : ""}</td><td></td></tr>
+                  ))}</tbody>
+                </table>
+              </>
+            )}
+          </aside>
+        </div>
+      ),
+    });
+  }
 
   elevationSheets.forEach((rows, si) => add({
     id: sheetId(2, si + 1), title: "Interior Elevations",
