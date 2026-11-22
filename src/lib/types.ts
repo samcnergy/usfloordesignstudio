@@ -165,6 +165,16 @@ export interface Opening {
   status?: "existing" | "new";
 }
 
+/** A soffit (bulkhead) along a wall: from s0 to s1 along it, `depth` out from it, its bottom `bottom` above the floor. */
+export interface Soffit {
+  id: string;
+  wall: string;
+  s0: number;
+  s1: number;
+  depth: number;
+  bottom: number;
+}
+
 export interface PlacedItem {
   id: string;
   productId?: string;
@@ -235,6 +245,8 @@ export interface DesignData {
   finishes?: import("./finishes").FinishData;
   // The demolition and construction plan: what comes out, in plain words. Missing: nothing chosen.
   demo?: { remove: string[]; notes?: string };
+  // Soffits over the cabinets (src/lib/soffit.ts). Missing: none.
+  soffits?: Soffit[];
 }
 
 export interface DesignRecord {

@@ -478,6 +478,15 @@ export function findProblems(design: DesignData): Problem[] {
     }
     if (f.open) problems.push({ ids: [op.id], message: `A ${op.type} is on ${f.label}, which is open` });
   }
+  // a wall cabinet or hood that runs up into a soffit
+  for (const so of design.soffits ?? []) {
+    for (const it of items) {
+      if (it.run !== so.wall || it.mountHeight <= 0) continue;
+      if (spansOverlap(it.offset, it.offset + it.width, so.s0, so.s1) && it.mountHeight + it.height > so.bottom + EPS) {
+        problems.push({ ids: [it.id], message: `${itemLabel(it)} runs up into the soffit on ${frames.get(so.wall)?.label ?? "its wall"}` });
+      }
+    }
+  }
   return problems;
 }
 

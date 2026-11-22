@@ -217,6 +217,7 @@ export function ElevationView({ design, catalog, run, selectedId, selectedIds, p
       marks.add(it.mountHeight + it.height);
     } else if (it.category === "tall" || it.style === "refrigerator") marks.add(it.height);
   }
+  for (const so of design.soffits ?? []) if (so.wall === run) marks.add(so.bottom);
   for (const op of openings) {
     if (op.type === "window") {
       marks.add(op.sill);
@@ -305,6 +306,19 @@ export function ElevationView({ design, catalog, run, selectedId, selectedIds, p
             <line x1={s0} x2={s1} y1={Y(crownTop + crown * 0.55)} y2={Y(crownTop + crown * 0.55)} stroke={crownPaint.ink} strokeOpacity={0.5} strokeWidth={0.25} />
           </g>
         ))}
+
+      {/* soffits on this wall: from the ceiling down to their bottom, across their run */}
+      {(design.soffits ?? []).filter((so) => so.wall === run).map((so) => (
+        <g key={`so-${so.id}`}>
+          <defs>
+            <pattern id={`so-${so.id}-h`} patternUnits="userSpaceOnUse" width={3} height={3} patternTransform="rotate(45)">
+              <line x1={0} y1={0} x2={0} y2={3} stroke="#9A9DA0" strokeWidth={0.25} />
+            </pattern>
+          </defs>
+          <rect x={so.s0} y={Y(H)} width={so.s1 - so.s0} height={Math.max(0, H - so.bottom)} fill={`url(#so-${so.id}-h)`} stroke="#1A1D1F" strokeWidth={0.4} />
+          <text x={(so.s0 + so.s1) / 2} y={Y((H + so.bottom) / 2) + fs * 0.3} fontSize={fs * 0.75} textAnchor="middle" fill="#1A1D1F" stroke="#FFFFFF" strokeWidth={fs * 0.2} paintOrder="stroke">SOFFIT</text>
+        </g>
+      ))}
 
       {/* floor and ceiling lines */}
       <line x1={-2} x2={L + 2} y1={Y(0)} y2={Y(0)} stroke="#1A1D1F" strokeWidth={0.9} />

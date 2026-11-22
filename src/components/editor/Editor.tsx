@@ -15,6 +15,7 @@ import { fillLine, fillWall } from "@/lib/fill";
 import { KitchenWizard } from "./KitchenWizard";
 import { MepPanel } from "./MepPanel";
 import { DEMO_ITEMS } from "@/lib/demo";
+import { newSoffit } from "@/lib/soffit";
 import { FinishPanel } from "./FinishPanel";
 import { mepOf, mepPoint, moveMep, type MepItem } from "@/lib/mep";
 import {
@@ -37,7 +38,7 @@ import {
   type Vec,
 } from "@/lib/geometry";
 import { cabinetTop, copySelection, dragInPlan, dropEmptyRuns, floorSpotFor, itemRun, levelWallCabinets, moveGroup, moveRun, pasteClipboard, putOnFloor, setCrown, slideAlongRun, standsAlone, turnPivot, turnRun, type Clipboard } from "@/lib/place";
-import type { Catalog, Category, DesignData, DesignRecord, ExtraItem, Island, Opening, OpeningType, PlacedItem, Product, ProductLine, Room } from "@/lib/types";
+import type { Catalog, Category, DesignData, DesignRecord, ExtraItem, Island, Opening, OpeningType, PlacedItem, Product, ProductLine, Room, Soffit } from "@/lib/types";
 import { useHistory } from "@/lib/useHistory";
 import { fmtIn, snap } from "@/lib/units";
 import { DrawRoom } from "./DrawRoom";
@@ -1139,6 +1140,38 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
               <button className="btn btn-secondary" onClick={addIsland}>
                 Add island
               </button>
+              <h3 className="cat-title">Soffits</h3>
+              <p className="muted">A soffit (bulkhead) over the cabinets. A new one starts over the wall cabinets on the wall picked: their run, depth and tops. It prints on the soffit plan and in the front views.</p>
+              {(design.soffits ?? []).map((so, i) => {
+                const len = wallLength(design.room, so.wall);
+                const upd = (patch: Partial<Soffit>) => apply((d) => ({ ...d, soffits: (d.soffits ?? []).map((x) => (x.id === so.id ? { ...x, ...patch } : x)) }));
+                return (
+                  <div key={so.id} className="mep-selected stack">
+                    <div className="insp-head"><b>Soffit {i + 1}</b><span className="muted">{wallLabel(design.room, so.wall)}</span></div>
+                    <label className="field">
+                      <span className="field-label">Wall</span>
+                      <select className="input" value={so.wall} onChange={(e) => upd(newSoffit({ ...design, soffits: [] }, e.target.value, so.id))}>
+                        {roomShape(design.room).walls.filter((w) => !w.open).map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
+                      </select>
+                    </label>
+                    <div className="grid2">
+                      <LengthInput id={`so-a-${so.id}`} label="From left end" value={so.s0} min={0} max={so.s1 - 1} onChange={(v) => upd({ s0: v })} />
+                      <LengthInput id={`so-b-${so.id}`} label="To" value={so.s1} min={so.s0 + 1} max={len} onChange={(v) => upd({ s1: v })} />
+                      <LengthInput id={`so-d-${so.id}`} label="Depth from the wall" value={so.depth} min={1} max={60} onChange={(v) => upd({ depth: v })} />
+                      <LengthInput id={`so-h-${so.id}`} label="Bottom above the floor" value={so.bottom} min={24} max={design.room.ceiling - 1} onChange={(v) => upd({ bottom: v })} />
+                    </div>
+                    <button className="btn btn-secondary" onClick={() => apply((d) => ({ ...d, soffits: (d.soffits ?? []).filter((x) => x.id !== so.id) }))}>Remove soffit</button>
+                  </div>
+                );
+              })}
+              <button className="btn btn-secondary" onClick={() => {
+                const wall = isWall(design.room, activeRunValid) ? activeRunValid : roomShape(design.room).walls.find((w) => !w.open)?.id;
+                if (!wall) return;
+                apply((d) => ({ ...d, soffits: [...(d.soffits ?? []), newSoffit(d, wall, uid())] }));
+              }}>
+                Add soffit on {isWall(design.room, activeRunValid) ? wallLabel(design.room, activeRunValid) : "a wall"}
+              </button>
+
               <h3 className="cat-title">Demolition: what comes out</h3>
               <p className="muted">Ticked items print on the demolition and construction plan, with the new walls, new doors and windows, and the blocking for the wall cabinets.</p>
               {DEMO_ITEMS.map((x) => (

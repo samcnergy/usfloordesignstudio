@@ -227,7 +227,7 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
         <aside className="ds-plan-side" style={{ width: `${notesWidth}in` }}>
           <div className="ds-north"><NorthArrow angle={northAngle(design)} /></div>
           <h4>Legend</h4>
-          <PlanLegend section={!!cut} />
+          <PlanLegend section={!!cut} soffit={(design.soffits ?? []).length > 0} />
           <h4>Plan notes</h4>
           <ol>{planNotes.map((n, i) => <li key={i}>{n}</li>)}</ol>
           <p className="ds-small">Cabinet codes are the manufacturer&apos;s order codes. See the cabinet schedule, {sheetId(1, 2)}.</p>
@@ -493,6 +493,47 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
     });
   }
 
+  // ---------- the soffit plan ----------
+  if ((design.soffits ?? []).length) {
+    const sos = design.soffits ?? [];
+    const soScale =
+      SCALES.find((s) => {
+        const b = planBox(design, s.k * 0.12, 3);
+        return b.width / s.k <= planSpace.width && b.height / s.k <= planSpace.height;
+      }) ?? fitScale(box.width, box.height, planSpace);
+    // a soffit deeper or shallower than the wall cabinets under it is why this plan is required (K&B drawing standards)
+    const differs = sos.some((so) => design.items.some((i) => i.run === so.wall && i.category === "wall" && i.offset < so.s1 && so.s0 < i.offset + i.width && Math.abs(i.depth - so.depth) > 0.01));
+    const soNotes = [
+      "Read with the floor plan, the interior elevations and the MEP plan.",
+      ...sos.map((so, i) => `Soffit ${i + 1}, ${shape.walls.find((w) => w.id === so.wall)?.label ?? ""}: ${fmtIn(so.s1 - so.s0)} long, ${fmtIn(so.depth)} deep, bottom ${fmtIn(so.bottom)} above the finished floor.`),
+      ...(differs ? ["The soffit depth differs from the wall cabinets below it; the soffit face is set as dimensioned, not to the cabinet face."] : ["Soffit faces line up with the wall cabinet faces below."]),
+      "Confirm ducts, pipes and framing in the soffit area before building; anything found goes to the designer.",
+      "Soffits finished to match the walls unless the finish schedule says otherwise.",
+    ];
+    add({
+      id: sheetId(5, 3), title: `${room} Soffit Plan`, scale: soScale.label,
+      body: (
+        <div className="ds-plan">
+          <div className="ds-plan-draw">
+            <PlanView design={design} catalog={catalog} print={{ scale: soScale.k }} soffit
+              room={{ name: room, ceiling: `CLG. HT. ${fmtIn(design.room.ceiling)}` }} />
+            <TitleMarker n={1} title={`${room.toUpperCase()} SOFFIT PLAN`} scale={soScale.label} />
+          </div>
+          <aside className="ds-plan-side" style={{ width: `${notesWidth}in` }}>
+            <div className="ds-north"><NorthArrow angle={northAngle(design)} /></div>
+            <h4>Legend</h4>
+            <div className="ds-legend">
+              <div className="ds-legend-row"><svg width="0.45in" height="0.2in" viewBox="0 0 22 10" aria-hidden="true"><defs><pattern id="lg-so" patternUnits="userSpaceOnUse" width={2} height={2} patternTransform="rotate(45)"><line x1={0} y1={0} x2={0} y2={2} stroke="#888" strokeWidth={0.4} /></pattern></defs><rect x={1} y={2.5} width={20} height={5} fill="url(#lg-so)" stroke="#000" strokeWidth={0.6} /></svg><span>Soffit, below the ceiling</span></div>
+              <div className="ds-legend-row"><svg width="0.45in" height="0.2in" viewBox="0 0 22 10" aria-hidden="true"><rect x={1} y={2.5} width={20} height={5} fill="none" stroke="#C4C6C8" strokeWidth={0.5} /></svg><span>Cabinets below, for reference</span></div>
+            </div>
+            <h4>Plan notes</h4>
+            <ol>{soNotes.map((n, i) => <li key={i}>{n}</li>)}</ol>
+          </aside>
+        </div>
+      ),
+    });
+  }
+
   if (has3d) add({
     id: sheetId(9, 1), title: "Presentation View", scale: "Not to scale",
     body: (
@@ -742,7 +783,7 @@ function MepSchedules({ items, specs, room, sheet, parts }: { items: MepItem[]; 
 }
 
 /** The plan legend: the line types and symbols used on the plan (K&B drawing standards: a legend on every plan). */
-function PlanLegend({ section }: { section?: boolean }) {
+function PlanLegend({ section, soffit }: { section?: boolean; soffit?: boolean }) {
   const row = (key: string, sample: React.ReactNode, text: string) => (
     <div className="ds-legend-row" key={key}>
       <svg width="0.55in" height="0.2in" viewBox="0 0 30 11" aria-hidden="true">{sample}</svg>
@@ -759,6 +800,7 @@ function PlanLegend({ section }: { section?: boolean }) {
       {row("door", <><line x1={4} x2={4} y1={1} y2={10} stroke="#000" strokeWidth={0.8} /><path d="M 4 1 A 9 9 0 0 1 13 10" fill="none" stroke="#000" strokeWidth={0.5} strokeDasharray="1.5 1" /></>, "Door and its swing")}
       {row("mark", <><polygon points="15,0.5 18,4 12,4" fill="#000" /><circle cx={15} cy={7} r={3.6} fill="#FFF" stroke="#000" strokeWidth={0.6} /><text x={15} y={8.6} fontSize={4.2} textAnchor="middle" fontWeight={700}>1</text></>, "Elevation marker: the arrow points at the wall drawn")}
       {row("code", <text x={15} y={7.5} fontSize={6} textAnchor="middle" fontWeight={700}>B24</text>, "Cabinet code, listed in the cabinet schedule")}
+      {soffit && row("soffit", <rect x={1} y={2.5} width={28} height={6} fill="none" stroke="#000" strokeWidth={0.6} strokeDasharray="4 1.5" />, "Soffit above (overhead), its bottom height noted")}
       {section && row("cut", <><line x1={1} x2={14} y1={5.5} y2={5.5} stroke="#000" strokeWidth={0.7} strokeDasharray="3 1" /><line x1={1} x2={1} y1={3} y2={8} stroke="#000" strokeWidth={1.4} /><polygon points="27,5.5 21,2.5 21,8.5" fill="#000" /><circle cx={19} cy={5.5} r={4.2} fill="#FFF" stroke="#000" strokeWidth={0.5} /><line x1={14.8} x2={23.2} y1={5.5} y2={5.5} stroke="#000" strokeWidth={0.4} /></>, "Section cut: the arrow points the way the section looks; drawing number over its sheet")}
     </div>
   );

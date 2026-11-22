@@ -17,6 +17,7 @@ import { BacksplashTags, FinishCross, FloorPattern } from "./FinishSymbols";
 import type { FinishData, FinishUse } from "@/lib/finishes";
 import { blockingSpans } from "@/lib/demo";
 import { counterRuns, rangeOpenings, sinkCuts } from "@/lib/countertop";
+import { soffitQuad, soffitsOf } from "@/lib/soffit";
 import type { SinkSpec } from "@/lib/finishes";
 import { MEP_KINDS, type MepItem } from "@/lib/mep";
 import { BASE_TOP, COUNTER_STYLES, CENTERLINE_STYLES, DROP_DOOR, OVERHANG, applianceDoors, centerlines, counterOutlines, openingStops, planLine, planTiers } from "@/lib/plan";
@@ -132,7 +133,7 @@ export function planBox(design: DesignData, fs?: number, tiers?: number): { x: n
 /** Elevation markers for the printed plan: which wall each looks at and its number (north wall first, clockwise). */
 export type ElevationMark = { wallId: string; n: number; sheet?: string };
 
-export function PlanView({ design, catalog, selectedId, selectedIds, problemIds, onTargetDown, onBackgroundDown, className, selectedRun, box, print, marks, room, mep, finish, demo, counter, cut }: ViewProps & {
+export function PlanView({ design, catalog, selectedId, selectedIds, problemIds, onTargetDown, onBackgroundDown, className, selectedRun, box, print, marks, room, mep, finish, demo, counter, cut, soffit }: ViewProps & {
   selectedRun?: string | null; box?: { x0: number; y0: number; x1: number; y1: number } | null;
   /** On the printed plan: the elevation markers and the room's name and ceiling height. */
   marks?: ElevationMark[]; room?: { name: string; ceiling: string };
@@ -149,11 +150,13 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
   counter?: { spec?: SinkSpec; mount?: string };
   /** The cutting plane of the cabinet section: across the counter at `s` along the run, looking along the run. */
   cut?: { run: string; s: number; n: number; sheet: string };
+  /** The soffit plan: soffits in solid lines and dimensioned, cabinets light; elsewhere soffits show as overhead dashed lines. */
+  soffit?: boolean;
 }) {
   const isSelected = (id: string) => (selectedIds ? selectedIds.has(id) : selectedId === id);
   const t = design.room.wallThickness;
   const shape = roomShape(design.room);
-  const frameBox = planBox(design, print ? print.scale * 0.12 : undefined, print && mep ? mepTiers(design, mep.items) : print && finish ? 1 : print && (demo || counter) ? 3 : undefined);
+  const frameBox = planBox(design, print ? print.scale * 0.12 : undefined, print && mep ? mepTiers(design, mep.items) : print && finish ? 1 : print && (demo || counter || soffit) ? 3 : undefined);
   const fs = frameBox.fs;
   const mono = !!print;
   const frames = new Map(allFrames(design).map((f) => [f.id, f]));
@@ -300,6 +303,9 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
         <pattern id="newwall" patternUnits="userSpaceOnUse" width={3} height={3} patternTransform="rotate(45)">
           <line x1={0} y1={0} x2={0} y2={3} stroke="#000000" strokeWidth={0.35} />
         </pattern>
+        <pattern id="soffit-hatch" patternUnits="userSpaceOnUse" width={4} height={4} patternTransform="rotate(45)">
+          <line x1={0} y1={0} x2={0} y2={4} stroke="#9A9DA0" strokeWidth={0.25} />
+        </pattern>
         <pattern id="blocking" patternUnits="userSpaceOnUse" width={2} height={2}>
           <path d="M 0 0 L 2 2 M 2 0 L 0 2" stroke="#000000" strokeWidth={0.2} />
         </pattern>
@@ -352,7 +358,7 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
         return (
           <g key={op.id} onPointerDown={down({ kind: "opening", id: op.id })} style={{ cursor: onTargetDown ? "grab" : undefined }}>
             <polygon points={hit} fill="transparent" />
-            <OpeningPlan op={op} frame={frame} t={t} solid={!!(print && demo)} />
+            <OpeningPlan op={op} frame={frame} t={t} solid={!!(print && (demo || soffit))} />
             {print && demo?.keys.get(op.id) && (() => {
               // a new door or window: the hexagonal key, inside the room in front of it
               const c = pointOn(frame, op.offset + op.width / 2, op.type === "door" ? Math.min(op.width * 0.45, 16) : fs * 2.6);
@@ -392,7 +398,28 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
         );
       })}
 
-      {print && counter ? (
+      {print && soffit ? (
+        <g>
+          {/* cabinets light; the soffits below the ceiling in solid lines, with their bottom height */}
+          {design.items.map((it) => {
+            const frame = frames.get(it.run);
+            return frame ? <polygon key={it.id} points={pointsAttr(itemQuad(it, frame))} fill="none" stroke="#C4C6C8" strokeWidth={0.18} /> : null;
+          })}
+          {soffitsOf(design).map((so) => {
+            const q = soffitQuad(design, so);
+            const f = frames.get(so.wall);
+            if (!q || !f) return null;
+            const c = pointOn(f, (so.s0 + so.s1) / 2, so.depth / 2);
+            return (
+              <g key={so.id}>
+                <polygon points={pointsAttr(q)} fill="url(#soffit-hatch)" stroke="#000000" strokeWidth={0.5} />
+                <text x={c.x} y={c.y + fs * 0.3} fontSize={fs * 0.8} textAnchor="middle" fontWeight={700} stroke="#FFFFFF" strokeWidth={fs * 0.25} paintOrder="stroke">SOFFIT, BOTTOM {fmtIn(so.bottom)} AFF</text>
+                <DimAligned p0={pointOn(f, so.s1, 0)} p1={pointOn(f, so.s1, so.depth)} o={f.u} d={fs * 1.2} fs={fs * 0.75} />
+              </g>
+            );
+          })}
+        </g>
+      ) : print && counter ? (
         <g>
           {/* the base cabinets in a very light line under the work surfaces; appliances are not drawn */}
           {design.items.filter((it) => it.mountHeight === 0 && it.category !== "appliance").map((it) => {
@@ -510,6 +537,23 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
         </>
       )}
 
+      {!soffit && !finish && !counter && !demo && soffitsOf(design).map((so) => {
+        // overhead: a soffit is above the cut, so it is a dashed line, its height noted (K&B drawing standards)
+        const q = soffitQuad(design, so);
+        const f = frames.get(so.wall);
+        if (!q || !f) return null;
+        const c = pointOn(f, (so.s0 + so.s1) / 2, so.depth + fs * 0.9);
+        const heavy = !!(mep && print);
+        return (
+          <g key={`so-${so.id}`} style={{ pointerEvents: "none" }}>
+            <polygon points={pointsAttr(q)} fill="none" stroke="#1A1D1F" strokeWidth={heavy ? 0.6 : 0.35} strokeDasharray={`${fs * 1.6} ${fs * 0.6}`} />
+            {(
+              <text x={c.x} y={c.y + fs * 0.3} fontSize={fs * 0.7} textAnchor="middle" fill="#1A1D1F" stroke="#FFFFFF" strokeWidth={fs * 0.2} paintOrder="stroke">SOFFIT ABOVE, {fmtIn(so.bottom)} AFF</text>
+            )}
+          </g>
+        );
+      })}
+
       {mep && <MepLayer design={design} items={mep.items} selectedId={mep.selectedId} onDown={mep.onDown} fs={fs} />}
 
       {turnRun && !mep && <TurnHandle design={design} run={turnRun} fs={fs} onDown={down({ kind: "turn", id: turnRun.id })} live={!!onTargetDown} />}
@@ -520,7 +564,17 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
         return (
           <g key={`tag-${w.id}`}>
             {/* one unit on a drawing: inches and fractions on the printed plan (K&B drawing standards) */}
-            {print && counter ? (() => {
+            {print && soffit ? (() => {
+              // the soffit plan is dimensioned like a floor plan: where each soffit starts and stops, then the wall
+              if (w.open) return null;
+              const o = { x: -w.n.x, y: -w.n.y };
+              const runs = soffitsOf(design).filter((so) => so.wall === w.id);
+              const step = fs * 1.4;
+              const tiers: React.ReactNode[] = [];
+              if (runs.length) tiers.push(<DimChain key="so" origin={w.origin} u={w.u} o={o} d={t + step} stops={[0, ...runs.flatMap((so) => [so.s0, so.s1]), w.length]} fs={fs * 0.8} from={t} />);
+              tiers.push(<DimChain key="all" origin={w.origin} u={w.u} o={o} d={t + step * (runs.length ? 2 : 1)} stops={[0, w.length]} fs={fs * 0.8} from={t} />);
+              return tiers;
+            })() : print && counter ? (() => {
               // up to three strings: the cutout centers, the counter length, the wall length (K&B drawing standards, Chapter 13)
               if (w.open) return null;
               const o = { x: -w.n.x, y: -w.n.y };

@@ -22,6 +22,7 @@ Next.js 16 (App Router), React 19, TypeScript strict, Supabase (Postgres, Auth, 
 | `src/lib/finishes.ts` | Finish plan and schedule: the finishes picked on the Finishes tab, their keys (T-01, P-01), and quantities worked out from the room. Drawn by `components/drawing/FinishSymbols.tsx`. |
 | `src/lib/demo.ts` | Demolition and construction plan: what comes out (Room tab), new walls and openings, blocking for the wall cabinets, D-1/W-1 keys. |
 | `src/lib/countertop.ts` | Countertop plan: sink cutouts and faucet holes from the sink and faucet sizes on the Finishes tab, counter runs, and the clear opening at each range. |
+| `src/lib/soffit.ts` | Soffits over the cabinets (Room tab): new ones start over the wall cabinets; drawn dashed overhead on the plans, in the front views, and on the soffit plan. |
 | `src/lib/fill.ts` | Fill a wall: standard cabinets and fillers (3/4", 1", 1 1/2", 2") planned around corners, doors, windows and appliances. |
 | `src/lib/wizard.ts` | The kitchen wizard: builds a one-wall, galley, L or U kitchen (sink, range and hood, fridge, dishwasher, door, island) from a few answers. |
 | `src/lib/draw.ts` | Drawing a room with the mouse: snapping, typed lengths and angles, and turning the corners into walls. |
