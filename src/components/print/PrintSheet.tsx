@@ -19,6 +19,7 @@ import { View3D, DEFAULT_CAMERA } from "@/components/drawing/View3D";
 import { roomShape } from "@/lib/geometry";
 import { DROP_DOOR } from "@/lib/plan";
 import { needsDemoPlan, newOpeningKeys } from "@/lib/demo";
+import { CabinetSection, EdgeDetail, sectionRun } from "@/components/drawing/Details";
 import { GROUP_NAME, GROUP_ORDER, MEP_KINDS, TAG_MEANING, mepKey, mepOf, type MepItem, type MepSpec } from "@/lib/mep";
 import { MepLegendGlyph } from "@/components/drawing/MepSymbols";
 import { FINISH_USES, MATERIAL_NAME, USE_NAME, finishKeys, finishQuantity, finishesOf, hasFinishes, type FinishData, type FinishUse } from "@/lib/finishes";
@@ -396,6 +397,37 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
     add({
       id: finSched, title: "Finish Schedule", scale: "None",
       body: <FinishSchedule design={design} fin={fin} keys={keys} room={room} thick={thick} sheet={finId} directions={directions} />,
+    });
+  }
+
+  // ---------- details: the typical cabinet section and the countertop edge ----------
+  const cut = sectionRun(design);
+  if (cut) {
+    const DETAIL_SCALES: Scale[] = [
+      { k: 8, label: '1 1/2" = 1\'-0"' }, { k: 12, label: '1" = 1\'-0"' }, { k: 16, label: '3/4" = 1\'-0"' }, { k: 24, label: '1/2" = 1\'-0"' },
+    ];
+    const H = design.room.ceiling;
+    const secScale = DETAIL_SCALES.find((sc) => (H + sc.k * 0.11 * 7) / sc.k <= area.height - MARKER) ?? DETAIL_SCALES[DETAIL_SCALES.length - 1];
+    const fin = finishesOf(design);
+    const fkeys = finishKeys(fin);
+    const wallName = shape.walls.find((w) => w.id === cut.run)?.label;
+    const secTitle = `TYPICAL CABINET SECTION${wallName ? ` AT ${wallName.toUpperCase()}` : ""}`;
+    add({
+      id: sheetId(5, 1), title: "Details", scale: "As noted",
+      body: (
+        <div className="ds-details">
+          <div className="ds-elev-cell">
+            <CabinetSection design={design} scale={secScale.k} counter={counter ? { name: counter.name, thickness: counter.thickness ?? 1.5 } : null}
+              splash={fin.uses.backsplash ? fkeys.backsplash ?? null : null} floorKey={fin.uses.floor ? fkeys.floor ?? null : null} />
+            <TitleMarker n={1} title={secTitle} scale={secScale.label} />
+          </div>
+          <div className="ds-elev-cell">
+            <EdgeDetail scale={4} thickness={counter?.thickness ?? 1.5} edge={fin.counterEdge ?? null} />
+            <TitleMarker n={2} title="COUNTERTOP EDGE" scale={'3" = 1\'-0"'} />
+            <p className="ds-small">Countertop overhangs the door faces by 1&quot;. Fabricator confirms the edge, seams and cutouts at template.</p>
+          </div>
+        </div>
+      ),
     });
   }
 

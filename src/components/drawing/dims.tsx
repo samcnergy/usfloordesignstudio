@@ -5,7 +5,8 @@ import { fmtIn } from "@/lib/units";
 
 const DIM = "#4A4D50";
 
-export function DimH({ x0, x1, y, fs, label, ext }: { x0: number; x1: number; y: number; fs: number; label?: string; ext?: number }) {
+/** `w` scales the line weights, for drawings at a much larger scale than the plans (a detail at 3" = 1'-0"). */
+export function DimH({ x0, x1, y, fs, label, ext, w = 1 }: { x0: number; x1: number; y: number; fs: number; label?: string; ext?: number; w?: number }) {
   if (x1 - x0 < 0.01) return null;
   const t = fs * 0.35;
   const text = label ?? fmtIn(x1 - x0);
@@ -14,13 +15,13 @@ export function DimH({ x0, x1, y, fs, label, ext }: { x0: number; x1: number; y:
     <g>
       {ext !== undefined && (
         <>
-          <line x1={x0} x2={x0} y1={ext} y2={y + t} stroke={DIM} strokeWidth={0.18} strokeOpacity={0.6} />
-          <line x1={x1} x2={x1} y1={ext} y2={y + t} stroke={DIM} strokeWidth={0.18} strokeOpacity={0.6} />
+          <line x1={x0} x2={x0} y1={ext} y2={y + t} stroke={DIM} strokeWidth={0.18 * w} strokeOpacity={0.6} />
+          <line x1={x1} x2={x1} y1={ext} y2={y + t} stroke={DIM} strokeWidth={0.18 * w} strokeOpacity={0.6} />
         </>
       )}
-      <line x1={x0} x2={x1} y1={y} y2={y} stroke={DIM} strokeWidth={0.22} />
-      <line x1={x0 - t} x2={x0 + t} y1={y + t} y2={y - t} stroke={DIM} strokeWidth={0.3} />
-      <line x1={x1 - t} x2={x1 + t} y1={y + t} y2={y - t} stroke={DIM} strokeWidth={0.3} />
+      <line x1={x0} x2={x1} y1={y} y2={y} stroke={DIM} strokeWidth={0.22 * w} />
+      <line x1={x0 - t} x2={x0 + t} y1={y + t} y2={y - t} stroke={DIM} strokeWidth={0.3 * w} />
+      <line x1={x1 - t} x2={x1 + t} y1={y + t} y2={y - t} stroke={DIM} strokeWidth={0.3 * w} />
       <text
         x={(x0 + x1) / 2}
         y={fits ? y - fs * 0.35 : y - fs * 0.35}
@@ -35,7 +36,7 @@ export function DimH({ x0, x1, y, fs, label, ext }: { x0: number; x1: number; y:
   );
 }
 
-export function DimV({ y0, y1, x, fs, label }: { y0: number; y1: number; x: number; fs: number; label?: string }) {
+export function DimV({ y0, y1, x, fs, label, w = 1 }: { y0: number; y1: number; x: number; fs: number; label?: string; w?: number }) {
   if (Math.abs(y1 - y0) < 0.01) return null;
   const t = fs * 0.35;
   const top = Math.min(y0, y1);
@@ -45,9 +46,9 @@ export function DimV({ y0, y1, x, fs, label }: { y0: number; y1: number; x: numb
   const fits = bottom - top > text.length * fs * 0.55;
   return (
     <g>
-      <line x1={x} x2={x} y1={top} y2={bottom} stroke={DIM} strokeWidth={0.22} />
-      <line x1={x - t} x2={x + t} y1={top + t} y2={top - t} stroke={DIM} strokeWidth={0.3} />
-      <line x1={x - t} x2={x + t} y1={bottom + t} y2={bottom - t} stroke={DIM} strokeWidth={0.3} />
+      <line x1={x} x2={x} y1={top} y2={bottom} stroke={DIM} strokeWidth={0.22 * w} />
+      <line x1={x - t} x2={x + t} y1={top + t} y2={top - t} stroke={DIM} strokeWidth={0.3 * w} />
+      <line x1={x - t} x2={x + t} y1={bottom + t} y2={bottom - t} stroke={DIM} strokeWidth={0.3 * w} />
       <text
         x={x - fs * 0.35}
         y={cy}

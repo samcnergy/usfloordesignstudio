@@ -453,3 +453,4 @@ textarea.input { resize: vertical; }
 .input-small { min-height: 30px; padding: 2px 6px; font-size: 13px; width: auto; }
 .ds-table-tight { font-size: 6.5pt; }
 .ds-table-tight th, .ds-table-tight td { padding: 1px 3px; }
+.ds-details { display: flex; gap: 0.5in; align-items: flex-start; }
