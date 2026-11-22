@@ -14,6 +14,7 @@ import type { Paper } from "@/lib/sheets";
 import { fillLine, fillWall } from "@/lib/fill";
 import { KitchenWizard } from "./KitchenWizard";
 import { MepPanel } from "./MepPanel";
+import { FinishPanel } from "./FinishPanel";
 import { mepOf, mepPoint, moveMep, type MepItem } from "@/lib/mep";
 import {
   allFrames,
@@ -44,7 +45,7 @@ import { RoomPanel } from "./RoomPanel";
 
 type Meta = Pick<DesignRecord, "name" | "customer_name" | "customer_phone" | "customer_address" | "designer_name" | "notes">;
 type SaveState = "saved" | "unsaved" | "saving" | "error" | "local";
-type Tab = "room" | "cabinets" | "openings" | "mep" | "photos" | "details";
+type Tab = "room" | "cabinets" | "openings" | "mep" | "finishes" | "photos" | "details";
 
 const CATEGORY_LABEL: Record<Category, string> = {
   base: "Base cabinets",
@@ -1030,6 +1031,7 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
                 ["cabinets", "Cabinets"],
                 ["openings", "Doors & Windows"],
                 ["mep", "Electrical"],
+                ["finishes", "Finishes"],
                 ["room", "Room"],
                 ["details", "Customer"],
                 ...(uploadPhoto ? ([["photos", "Photos"]] as const) : []),
@@ -1178,6 +1180,8 @@ export function Editor({ initial, catalog, persist, uploadPhoto, backHref }: Edi
             <MepPanel design={design} apply={apply} selectedId={mepSel} setSelectedId={setMepSel}
               wall={isWall(design.room, activeRunValid) ? activeRunValid : null} flash={flash} />
           )}
+
+          {tab === "finishes" && <FinishPanel design={design} catalog={catalog} apply={apply} />}
 
           {tab === "photos" && uploadPhoto && <PhotosPanel design={design} apply={apply} uploadPhoto={uploadPhoto} flash={flash} />}
         </aside>

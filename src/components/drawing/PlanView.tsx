@@ -9,12 +9,14 @@
 
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { DesignData, Island, Opening, PlacedItem } from "@/lib/types";
-import { allFrames, islandDepth, islandFrame, islandRect, itemCenter, itemLabel, itemQuad, pointOn, pointsAttr, roomShape, runQuad, type RunFrame, type Vec } from "@/lib/geometry";
+import { allFrames, insideRoom, islandDepth, islandFrame, islandRect, itemCenter, itemLabel, itemRect, itemQuad, pointOn, pointsAttr, roomShape, runQuad, type RunFrame, type Vec } from "@/lib/geometry";
 import { fmtFtIn, fmtIn } from "@/lib/units";
 import { DimAligned, DimChain } from "./dims";
 import { MepLayer } from "./MepSymbols";
+import { BacksplashTags, FinishCross, FloorPattern } from "./FinishSymbols";
+import type { FinishData, FinishUse } from "@/lib/finishes";
 import { MEP_KINDS, type MepItem } from "@/lib/mep";
-import { CENTERLINE_STYLES, DROP_DOOR, applianceDoors, centerlines, counterOutlines, openingStops, planLine, planTiers } from "@/lib/plan";
+import { BASE_TOP, COUNTER_STYLES, CENTERLINE_STYLES, DROP_DOOR, applianceDoors, centerlines, counterOutlines, openingStops, planLine, planTiers } from "@/lib/plan";
 import type { DrawTarget, ViewProps } from "./ElevationView";
 import { PROBLEM, PaintDefs, SELECT, finishPaint, monoPaint } from "./paint";
 
@@ -66,6 +68,19 @@ function TurnHandle({ design, run, fs, onDown, live }: { design: DesignData; run
   );
 }
 
+/** Counter spans along a wall, merged: where each work surface starts and stops. */
+function counterSpans(design: DesignData, run: string): [number, number][] {
+  const s = design.items.filter((i) => i.run === run && i.mountHeight === 0 && COUNTER_STYLES.has(i.style) && Math.abs(i.height - BASE_TOP) < 0.01)
+    .map((i) => [i.offset, i.offset + i.width] as [number, number]).sort((a, b) => a[0] - b[0]);
+  const out: [number, number][] = [];
+  for (const x of s) {
+    const last = out[out.length - 1];
+    if (last && x[0] <= last[1] + 0.1) last[1] = Math.max(last[1], x[1]);
+    else out.push([...x]);
+  }
+  return out;
+}
+
 /** The walls that carry the light positions on the MEP plan: the top one and the left one. */
 function lightWalls(design: DesignData): string[] {
   const walls = roomShape(design.room).walls.filter((w) => !w.open);
@@ -107,7 +122,7 @@ export function planBox(design: DesignData, fs?: number, tiers?: number): { x: n
 /** Elevation markers for the printed plan: which wall each looks at and its number (north wall first, clockwise). */
 export type ElevationMark = { wallId: string; n: number };
 
-export function PlanView({ design, catalog, selectedId, selectedIds, problemIds, onTargetDown, onBackgroundDown, className, selectedRun, box, print, marks, room, mep }: ViewProps & {
+export function PlanView({ design, catalog, selectedId, selectedIds, problemIds, onTargetDown, onBackgroundDown, className, selectedRun, box, print, marks, room, mep, finish }: ViewProps & {
   selectedRun?: string | null; box?: { x0: number; y0: number; x1: number; y1: number } | null;
   /** On the printed plan: the elevation markers and the room's name and ceiling height. */
   marks?: ElevationMark[]; room?: { name: string; ceiling: string };
@@ -116,11 +131,13 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
    * symbols (K&B drawing standards, Chapter 11). With `onDown`, the symbols can be picked and dragged.
    */
   mep?: { items: MepItem[]; selectedId?: string | null; onDown?: (e: ReactPointerEvent<SVGElement>, id: string) => void };
+  /** The finish plan: no codes or fixture dimensions, the floor pattern, the finish symbol and the countertop extents. */
+  finish?: { data: FinishData; keys: Partial<Record<FinishUse, string>>; counterThick: number };
 }) {
   const isSelected = (id: string) => (selectedIds ? selectedIds.has(id) : selectedId === id);
   const t = design.room.wallThickness;
   const shape = roomShape(design.room);
-  const frameBox = planBox(design, print ? print.scale * 0.12 : undefined, print && mep ? mepTiers(design, mep.items) : undefined);
+  const frameBox = planBox(design, print ? print.scale * 0.12 : undefined, print && mep ? mepTiers(design, mep.items) : print && finish ? 1 : undefined);
   const fs = frameBox.fs;
   const mono = !!print;
   const frames = new Map(allFrames(design).map((f) => [f.id, f]));
@@ -266,6 +283,13 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
       </defs>
       <polygon points={floor} fill="#FFFFFF" />
       {mono ? null : <polygon points={floor} fill="url(#floorgrid)" />}
+      {finish?.data.uses.floor?.size && (
+        <>
+          <defs><clipPath id="finish-floor-clip"><polygon points={floor} /></clipPath></defs>
+          <FloorPattern design={design} size={finish.data.uses.floor.size} clipId="finish-floor-clip"
+            kind={["wood", "vinyl", "laminate"].includes(finish.data.uses.floor.material) ? "plank" : "grid"} />
+        </>
+      )}
 
       {shape.walls.map((w) => {
         const band = pointsAttr([w.origin, w.end, w.outerEnd, w.outerStart]);
@@ -277,7 +301,7 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
                 <line x1={w.origin.x} y1={w.origin.y} x2={w.end.x} y2={w.end.y} stroke={wallColor(w.id)} strokeWidth={0.5} strokeDasharray="3 2" />
               </>
             ) : (
-              print && mep
+              print && (mep || finish)
                 ? <polygon points={band} fill="#FFFFFF" stroke="#000000" strokeWidth={0.45} strokeLinejoin="miter" />
                 : <polygon points={band} fill={wallColor(w.id)} stroke={wallColor(w.id)} strokeWidth={0.15} strokeLinejoin="round" />
             )}
@@ -322,7 +346,19 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
         );
       })}
 
-      {mep ? (
+      {finish ? (
+        <g style={{ pointerEvents: "none" }}>
+          {/* cabinets and appliances light, the work surfaces in a medium line */}
+          {design.items.map((it) => {
+            const frame = frames.get(it.run);
+            if (!frame) return null;
+            return <polygon key={it.id} points={pointsAttr(itemQuad(it, frame))} fill="#FFFFFF" stroke="#8A8D90" strokeWidth={0.22} />;
+          })}
+          {counterOutlines(design, frames).map((q, i) => (
+            <polygon key={`ctr-${i}`} points={pointsAttr(q)} fill="#FFFFFF" stroke="#000000" strokeWidth={0.4} />
+          ))}
+        </g>
+      ) : mep ? (
         <g opacity={print ? 1 : 0.4} style={{ pointerEvents: "none" }}>
           {/* cabinets, counters and appliances kept light, so the symbols read first */}
           {counterOutlines(design, frames).map((q, i) => (
@@ -376,7 +412,12 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
         return (
           <g key={`tag-${w.id}`}>
             {/* one unit on a drawing: inches and fractions on the printed plan (K&B drawing standards) */}
-            {print ? (() => {
+            {print && finish ? (() => {
+              // the finish plan dimensions only the work surfaces: where each counter starts and stops
+              const spans = counterSpans(design, w.id);
+              if (w.open || !spans.length) return null;
+              return <DimChain origin={w.origin} u={w.u} o={{ x: -w.n.x, y: -w.n.y }} d={t + fs * 1.4} stops={[0, ...spans.flat(), w.length]} fs={fs * 0.8} from={t} />;
+            })() : print ? (() => {
               // three strings from the wall out: openings (inner), centerlines (center), overall (outer)
               const o = { x: -w.n.x, y: -w.n.y };
               const tiers: React.ReactNode[] = [];
@@ -422,7 +463,21 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
           </g>
         );
       })}
-      {dimIslands.map((isl) => {
+      {finish && dimIslands.map((isl) => {
+        const f = frames.get(isl.id);
+        if (!f) return null;
+        const q = counterOutlines(design, new Map([[isl.id, f]])).flat();
+        if (!q.length) return null;
+        const x0 = Math.min(...q.map((p) => p.x)), x1 = Math.max(...q.map((p) => p.x));
+        const y0 = Math.min(...q.map((p) => p.y)), y1 = Math.max(...q.map((p) => p.y));
+        return (
+          <g key={`isl-top-${isl.id}`}>
+            <DimChain origin={{ x: x0, y: y0 }} u={{ x: 1, y: 0 }} o={{ x: 0, y: -1 }} d={fs * 1.4} fs={fs * 0.8} stops={[0, x1 - x0]} />
+            <DimChain origin={{ x: x0, y: y0 }} u={{ x: 0, y: 1 }} o={{ x: -1, y: 0 }} d={fs * 1.4} fs={fs * 0.8} stops={[0, y1 - y0]} />
+          </g>
+        );
+      })}
+      {!finish && dimIslands.map((isl) => {
         // an island is located from the walls in two directions, with the centerlines of any fixture on it
         const on = design.items.filter((i) => i.run === isl.id);
         const r = islandRect(design, isl);
@@ -474,10 +529,41 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
         const rects = design.islands.filter((i) => design.items.some((x) => x.run === i.id)).map((i) => islandRect(design, i));
         const toRect = (p: { x: number; y: number }, q: { x0: number; y0: number; x1: number; y1: number }) =>
           Math.hypot(Math.max(q.x0 - p.x, 0, p.x - q.x1), Math.max(q.y0 - p.y, 0, p.y - q.y1));
-        const clear = (p: { x: number; y: number }) => Math.min(Infinity, ...centers.map((c) => Math.hypot(c.x - p.x, c.y - p.y)), ...rects.map((q) => toRect(p, q) * 1.6));
-        const best = options.reduce((a, b) => (clear(b) > clear(a) + 0.01 ? b : a), options[0]);
+        // the finish symbol is large: it also keeps clear of the counters and the backsplash tags along the walls
+        const fromWalls = (p: { x: number; y: number }) => Math.min(...shape.walls.map((w) => {
+          const s0 = Math.max(0, Math.min(w.length, (p.x - w.origin.x) * w.u.x + (p.y - w.origin.y) * w.u.y));
+          return Math.hypot(p.x - (w.origin.x + w.u.x * s0), p.y - (w.origin.y + w.u.y * s0));
+        }));
+        // the finish symbol keeps clear of every cabinet, counter and appliance, and a little off the walls
+        const pieces = finish ? [...design.items.map((it) => { const f = frames.get(it.run); return f ? itemRect(it, f) : null; }).filter((r): r is NonNullable<typeof r> => !!r),
+          ...counterOutlines(design, frames).map((q) => ({ x0: Math.min(...q.map((v) => v.x)), y0: Math.min(...q.map((v) => v.y)), x1: Math.max(...q.map((v) => v.x)), y1: Math.max(...q.map((v) => v.y)) }))] : [];
+        const clear = (p: { x: number; y: number }) => Math.min(Infinity, ...centers.map((c) => Math.hypot(c.x - p.x, c.y - p.y)), ...rects.map((q) => toRect(p, q) * 1.6),
+          ...pieces.map((q) => toRect(p, q) * 1.6), ...(finish ? [fromWalls(p) * 1.6] : []));
+        // the finish symbol looks over the whole floor, every 6", for the most open spot (inside the room)
+        const grid: { x: number; y: number }[] = [];
+        if (finish) for (let y = B.y0; y <= B.y1; y += 6) for (let x = B.x0; x <= B.x1; x += 6) if (insideRoom(design.room, { x, y })) grid.push({ x, y });
+        const pool = finish && grid.length ? grid : options;
+        // for the finish symbol, every part of it (the cross, the ceiling and base boxes, the name under it) has to be clear
+        const fb = fs * 2.1;
+        const score = (p: { x: number; y: number }) => finish
+          ? Math.min(...[[0, 0], [0, -2.6], [0, 2.6], [0, 4.6], [-1.6, 0], [1.6, 0], [-1.6, 4.6], [1.6, 4.6]].map(([dx, dy]) => clear({ x: p.x + dx * fb, y: p.y + dy * fb })))
+          : clear(p);
+        const best = pool.reduce((a, b) => (score(b) > score(a) + 0.01 ? b : a), pool[0]);
         const cx = best.x;
         const cy = best.y;
+        if (finish) {
+          // the finish symbol takes the room's spot; the name and ceiling height go under it
+          const b = fs * 2.1;
+          const below = cy + (finish.data.uses.base ? 3.6 : 2.4) * b;
+          return (
+            <g>
+              <FinishCross design={design} at={{ x: cx, y: cy }} b={b} keys={finish.keys} uses={finish.data.uses} />
+              <text x={cx} y={below} fontSize={fs * 1.25} textAnchor="middle" fontWeight={700} fill="#1A1D1F" letterSpacing={fs * 0.06}>{room.name.toUpperCase()}</text>
+              <text x={cx} y={below + fs * 1.5} fontSize={fs} textAnchor="middle" fill="#1A1D1F">{room.ceiling}</text>
+              {finish.keys.backsplash && <BacksplashTags design={design} b={b} keyText={finish.keys.backsplash} counterThick={finish.counterThick} />}
+            </g>
+          );
+        }
         return (
           <g>
             <text x={cx} y={cy} fontSize={fs * 1.25} textAnchor="middle" fontWeight={700} fill="#1A1D1F" letterSpacing={fs * 0.06}>{room.name.toUpperCase()}</text>

@@ -227,6 +227,8 @@ export interface DesignData {
   northWall?: string | null;
   // The electrical, lighting and plumbing plan (src/lib/mep.ts). Missing: nothing laid out yet.
   mep?: import("./mep").MepData;
+  // The finish plan and schedule (src/lib/finishes.ts). Missing: no finishes chosen.
+  finishes?: import("./finishes").FinishData;
 }
 
 export interface DesignRecord {

@@ -19,6 +19,7 @@ Next.js 16 (App Router), React 19, TypeScript strict, Supabase (Postgres, Auth, 
 | `src/lib/place.ts` | Moving pieces: sliding along a wall, lifting one onto the open floor, turning a run, and joining a wall again. |
 | `src/lib/plan.ts` | The printed plan's K&B conventions: hidden and object lines, countertop outlines, appliance doors open, centerlines, opening stops, and the clockwise numbering order. |
 | `src/lib/mep.ts` | The electrical, lighting and plumbing plan: symbol kinds, the automatic layout (counter outlets, appliance hook-ups, lights, switches), moving symbols. Drawn by `components/drawing/MepSymbols.tsx`, edited on the Electrical tab (`MepPanel.tsx`). |
+| `src/lib/finishes.ts` | Finish plan and schedule: the finishes picked on the Finishes tab, their keys (T-01, P-01), and quantities worked out from the room. Drawn by `components/drawing/FinishSymbols.tsx`. |
 | `src/lib/fill.ts` | Fill a wall: standard cabinets and fillers (3/4", 1", 1 1/2", 2") planned around corners, doors, windows and appliances. |
 | `src/lib/wizard.ts` | The kitchen wizard: builds a one-wall, galley, L or U kitchen (sink, range and hood, fridge, dishwasher, door, island) from a few answers. |
 | `src/lib/draw.ts` | Drawing a room with the mouse: snapping, typed lengths and angles, and turning the corners into walls. |

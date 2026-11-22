@@ -20,6 +20,7 @@ import { roomShape } from "@/lib/geometry";
 import { DROP_DOOR } from "@/lib/plan";
 import { GROUP_NAME, GROUP_ORDER, MEP_KINDS, TAG_MEANING, mepKey, mepOf, type MepItem, type MepSpec } from "@/lib/mep";
 import { MepLegendGlyph } from "@/components/drawing/MepSymbols";
+import { FINISH_USES, MATERIAL_NAME, USE_NAME, finishKeys, finishQuantity, finishesOf, hasFinishes, type FinishData, type FinishUse } from "@/lib/finishes";
 import { buildSchedule, type ScheduleRow } from "@/lib/schedule";
 import {
   FIRM, GENERAL_NOTES, INTERPRETATION, LIABILITY, PAPER, SCALES, copyright, drawingArea, fitScale, initials, roomName, sheetId,
@@ -291,6 +292,47 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
     });
   }
 
+  // ---------- the finish plan and finish schedule ----------
+  if (hasFinishes(design)) {
+    const fin = finishesOf(design);
+    const keys = finishKeys(fin);
+    const thick = counter?.thickness ?? 1.5;
+    const finScale =
+      SCALES.find((s) => {
+        const b = planBox(design, s.k * 0.12, 1);
+        return b.width / s.k <= planSpace.width && b.height / s.k <= planSpace.height;
+      }) ?? fitScale(box.width, box.height, planSpace);
+    const finId = sheetId(4, 1);
+    const finSched = sheetId(4, 2);
+    const notes = finishNotes(fin, counter?.name);
+    add({
+      id: finId, title: `${room} Finish Plan`, scale: finScale.label,
+      body: (
+        <div className="ds-plan">
+          <div className="ds-plan-draw">
+            <PlanView design={design} catalog={catalog} print={{ scale: finScale.k }} finish={{ data: fin, keys, counterThick: thick }}
+              room={{ name: room, ceiling: `CLG. HT. ${fmtIn(design.room.ceiling)}` }} />
+            <TitleMarker n={1} title={`${room.toUpperCase()} FINISH PLAN`} scale={finScale.label} />
+          </div>
+          <aside className="ds-plan-side" style={{ width: `${notesWidth}in` }}>
+            <div className="ds-north"><NorthArrow angle={northAngle(design)} /></div>
+            <h4>Finish symbol</h4>
+            <p className="ds-small">The boxes are the wall finishes, each on the side of its wall; the gray circle is the floor; the box above is the ceiling and the box below the base. Tags with a dot mark the backsplash.</p>
+            <h4>Finishes</h4>
+            <ol className="ds-key-list">{FINISH_USES.filter((u) => fin.uses[u]).map((u) => <li key={u}><b>{keys[u]}</b> {USE_NAME[u]}: {fin.uses[u]!.description || MATERIAL_NAME[fin.uses[u]!.material]}</li>)}</ol>
+            <h4>Plan notes</h4>
+            <ol>{notes.map((n, i) => <li key={i}>{n}</li>)}</ol>
+            <p className="ds-small">Finish schedule: sheet {finSched}.</p>
+          </aside>
+        </div>
+      ),
+    });
+    add({
+      id: finSched, title: "Finish Schedule", scale: "None",
+      body: <FinishSchedule design={design} fin={fin} keys={keys} room={room} thick={thick} sheet={finId} directions={directions} />,
+    });
+  }
+
   if (has3d) add({
     id: sheetId(9, 1), title: "Presentation View", scale: "Not to scale",
     body: (
@@ -367,6 +409,62 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
     </div>
   );
 
+}
+
+function finishNotes(fin: FinishData, counterName?: string): string[] {
+  const tile = FINISH_USES.some((u) => fin.uses[u]?.material === "tile" || fin.uses[u]?.material === "stone");
+  return [
+    "Read with the floor plan and the interior elevations. Wall tile layout is shown on the elevations.",
+    `Countertop: ${counterName ?? "as scheduled"}${fin.counterEdge ? `, ${fin.counterEdge} edge` : ""}. ${fin.sinkMount ? `Sink ${fin.sinkMount}.` : "Sink mounting per the fabricator and the sink chosen."} Fabricator templates after the cabinets are set.`,
+    ...(tile ? ["Tile: grout, trims and setting materials as scheduled for each tile. Set out from the center of each wall or the main sightline so cut tiles at the ends are equal."] : []),
+    ...(fin.uses.floor ? ["Flooring runs under the appliances and to the cabinet toe kicks; transitions at the doorways flush where the materials allow."] : []),
+    ...(fin.uses.walls?.material === "paint" || fin.uses.ceiling?.material === "paint" ? ["Paint: walls and ceiling to a smooth finish ready for paint; sheen as scheduled."] : []),
+    "Quantities are measured from the drawings with no allowance for waste; the installer orders the overage.",
+  ];
+}
+
+/** Finish schedule in the book's column order: key, room, description, maker, product, color, notes, quantity, floor, walls, ceiling, supplied, installed. */
+function FinishSchedule({ design, fin, keys, room, thick, sheet, directions }: {
+  design: DesignRecord["data"]; fin: FinishData; keys: Partial<Record<FinishUse, string>>; room: string; thick: number; sheet: string; directions: Map<string, string>;
+}) {
+  // one row per key; a finish used in two places (walls and ceiling paint) shows both
+  const rows = new Map<string, FinishUse[]>();
+  for (const u of FINISH_USES) if (fin.uses[u] && keys[u]) rows.set(keys[u]!, [...(rows.get(keys[u]!) ?? []), u]);
+  const order = ["NORTH", "EAST", "SOUTH", "WEST", "NORTHEAST", "SOUTHEAST", "SOUTHWEST", "NORTHWEST"];
+  const wallsText = [...new Set([...directions.values()])].sort((a, b) => order.indexOf(a) - order.indexOf(b)).map((d) => d[0] + (d.length > 5 ? d[5] : "")).join(", ");
+  const splashWalls = [...new Set(design.items.filter((i) => i.mountHeight === 0).map((i) => directions.get(i.run)).filter((d): d is string => !!d))]
+    .sort((a, b) => order.indexOf(a) - order.indexOf(b)).map((d) => d[0] + (d.length > 5 ? d[5] : "")).join(", ");
+  return (
+    <div className="ds-schedule">
+      <h3>Finish schedule ({room}, sheet {sheet})</h3>
+      <table className="ds-table">
+        <thead><tr><th>Key</th><th>Room</th><th>Description</th><th>Manufacturer</th><th>Product no.</th><th>Color / finish</th><th>Notes</th><th>Qty</th><th>Floor</th><th>Walls</th><th>Ceiling</th><th>Supplied by</th><th>Installed by</th></tr></thead>
+        <tbody>
+          {[...rows.entries()].map(([key, uses]) => {
+            const e = fin.uses[uses[0]]!;
+            return (
+              <tr key={key}>
+                <td className="tabular"><b>{key}</b></td>
+                <td>{room}</td>
+                <td>{e.description || MATERIAL_NAME[e.material]} ({uses.join(", ")}){e.size ? `, ${e.size.w}" x ${e.size.l}"` : ""}</td>
+                <td>{e.manufacturer ?? ""}</td>
+                <td>{e.product ?? ""}</td>
+                <td>{e.color ?? ""}</td>
+                <td>{e.notes ?? ""}</td>
+                <td className="tabular">{uses.map((u) => finishQuantity(design, u, thick)).join(" + ")}</td>
+                <td className="ds-dot">{uses.includes("floor") ? "\u25CF" : ""}</td>
+                <td>{[uses.includes("walls") ? wallsText : "", uses.includes("backsplash") ? `${splashWalls} (backsplash)` : "", uses.includes("base") ? "Base, where the walls show" : ""].filter(Boolean).join("; ")}</td>
+                <td className="ds-dot">{uses.includes("ceiling") ? "\u25CF" : ""}</td>
+                <td>{e.suppliedBy ?? ""}</td>
+                <td>{e.installedBy ?? ""}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p className="ds-small">Walls are listed north, east, south, west. Blank cells are filled in on the Finishes tab of the design, or by hand before the drawings are issued.</p>
+    </div>
+  );
 }
 
 /** The MEP legend: every symbol on the plan, grouped mechanical, electrical, lighting, plumbing (K&B drawing standards). */
