@@ -16,6 +16,7 @@
 
 import type { ReactNode } from "react";
 import type { Catalog, DesignData, PlacedItem } from "@/lib/types";
+import { liveOpenings } from "@/lib/types";
 import { isWall, pointOn, roomShape, runFrame, type RunFrame, type Vec } from "@/lib/geometry";
 import { atTop, cabinetTop } from "@/lib/place";
 import { CabinetFront } from "./CabinetFront";
@@ -144,7 +145,7 @@ function solids(design: DesignData, catalog: Catalog, look: Camera3D["look"], fa
     if (w.open || !faces(flat(w.n))) continue;
     const t = room.wallThickness;
     const f = boxFaces(w, 0, w.length, -t, 0, 0, room.ceiling, color ? "#FBFAF7" : "#FFFFFF");
-    const openings = design.openings.filter((o) => o.wall === w.id);
+    const openings = liveOpenings(design).filter((o) => o.wall === w.id);
     f[0].detail = { plane: frontPlane(w, 0), node: <g>{openings.map((op) => <OpeningFront key={op.id} op={op} Y={(z) => -z} />)}</g> };
     walls.push({ key: `wall-${w.id}`, axes: [w.u, w.n], faces: f });
   }

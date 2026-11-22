@@ -13,6 +13,7 @@
 import { islandRect, roomShape, runFrame, pointOn, insideRoom, type Vec } from "./geometry";
 import { BASE_TOP, COUNTER_STYLES } from "./plan";
 import type { DesignData, PlacedItem } from "./types";
+import { liveOpenings } from "./types";
 
 export type MepGroup = "mechanical" | "electrical" | "lighting" | "plumbing";
 export type Mount = "wall" | "ceiling" | "floor" | "cabinet";
@@ -284,7 +285,7 @@ export function layoutMep(design: DesignData, makeId: () => string): { mep: MepD
   const under = items.filter((m) => m.kind === "undercabinet");
 
   // switches: a gang by the entry door, on the latch side
-  const door = design.openings.find((o) => o.type === "door");
+  const door = liveOpenings(design).find((o) => o.type === "door");
   let at: { wall: string; s: number; step: number } | null = null;
   if (door) {
     const f = runFrame(design, door.wall);

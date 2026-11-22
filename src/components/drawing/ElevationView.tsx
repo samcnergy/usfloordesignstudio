@@ -6,6 +6,7 @@
 import { BASE_TOP, COUNTER_STYLES } from "@/lib/plan";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { Catalog, DesignData, Opening, PlacedItem } from "@/lib/types";
+import { liveOpenings } from "@/lib/types";
 import { isWall, itemLabel, runFrame } from "@/lib/geometry";
 import { atTop, cabinetTop } from "@/lib/place";
 import { fmtIn } from "@/lib/units";
@@ -196,7 +197,7 @@ export function ElevationView({ design, catalog, run, selectedId, selectedIds, p
   const mono = !!print;
   const Y = (z: number) => H - z;
 
-  const openings = isWall(design.room, run) ? design.openings.filter((o) => o.wall === run) : [];
+  const openings = isWall(design.room, run) ? liveOpenings(design).filter((o) => o.wall === run) : [];
   const counter = mono ? monoPaint(counterPaint(catalog, design)) : counterPaint(catalog, design);
   const counterThick = catalog.countertops.find((c) => c.id === design.countertopId)?.thickness ?? 1.5;
   const runs = counterRuns(items);

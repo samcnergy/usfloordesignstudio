@@ -161,9 +161,13 @@ export interface Opening {
   height: number;
   sill: number; // windows only, floor to bottom of window
   hinge: "left" | "right"; // doors only
-  // For the demolition and construction plan: an existing opening (the default) or a new one.
-  status?: "existing" | "new";
+  // For the demolition and construction plan: an existing opening (the default), a new one, or an
+  // existing one to be closed up. A closed one is solid wall in every drawing of the finished room.
+  status?: "existing" | "new" | "close";
 }
+
+/** The doors, windows and openings of the finished room: everything but those being closed up. */
+export const liveOpenings = (d: { openings: Opening[] }): Opening[] => d.openings.filter((o) => o.status !== "close");
 
 /** A soffit (bulkhead) along a wall: from s0 to s1 along it, `depth` out from it, its bottom `bottom` above the floor. */
 export interface Soffit {

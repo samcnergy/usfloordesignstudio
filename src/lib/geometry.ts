@@ -10,6 +10,7 @@
 // by offset along u, so walls and islands share one placement model.
 
 import type { DesignData, Island, Opening, PlacedItem, Room, Wall, WallId } from "./types";
+import { liveOpenings } from "./types";
 
 export interface Vec {
   x: number;
@@ -458,7 +459,7 @@ export function findProblems(design: DesignData): Problem[] {
     }
   }
 
-  for (const op of design.openings) {
+  for (const op of liveOpenings(design)) {
     const f = frames.get(op.wall);
     if (!f) {
       problems.push({ ids: [op.id], message: `A ${op.type} is on a wall that was removed` });
@@ -542,7 +543,7 @@ export function firstFreeOffset(design: DesignData, run: string, width: number, 
     if (spansOverlap(v0, v1, span[0], span[1])) taken.push([it.offset, it.offset + it.width]);
   }
   if (isWall(design.room, run)) {
-    for (const op of design.openings) {
+    for (const op of liveOpenings(design)) {
       if (op.wall !== run) continue;
       const [o0, o1] = openingSpan(op);
       if (spansOverlap(o0, o1, span[0], span[1])) taken.push([op.offset, op.offset + op.width]);
@@ -573,7 +574,7 @@ export function nearestFreeOffset(design: DesignData, run: string, width: number
   }
   const wall = isWall(design.room, run);
   if (wall) {
-    for (const op of design.openings) {
+    for (const op of liveOpenings(design)) {
       if (op.wall !== run) continue;
       const [o0, o1] = openingSpan(op);
       if (spansOverlap(o0, o1, span[0], span[1])) taken.push([op.offset, op.offset + op.width]);

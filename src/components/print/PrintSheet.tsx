@@ -30,6 +30,7 @@ import {
   northAngle, wallDirections, wallsFromNorth, type Paper, type PaperSpec, type Scale,
 } from "@/lib/sheets";
 import type { Catalog, DesignRecord } from "@/lib/types";
+import { liveOpenings } from "@/lib/types";
 import { fmtIn } from "@/lib/units";
 
 function chunk<T>(arr: T[], n: number): T[][] {
@@ -125,7 +126,7 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
 
   // ---------- elevations: the north wall first, then clockwise, then islands ----------
   const walls = wallsFromNorth(design, shape.walls).filter(
-    (w) => design.items.some((i) => i.run === w.id) || design.openings.some((o) => o.wall === w.id),
+    (w) => design.items.some((i) => i.run === w.id) || liveOpenings(design).some((o) => o.wall === w.id),
   );
   const seen = new Map<string, number>();
   for (const w of walls) seen.set(directions.get(w.id) ?? "", (seen.get(directions.get(w.id) ?? "") ?? 0) + 1);
@@ -247,16 +248,18 @@ export function PrintSheet({ record, catalog, paper = "tabloid" }: { record: Des
     const keys = newOpeningKeys(design);
     const demoScale =
       SCALES.find((s) => {
-        const b = planBox(design, s.k * 0.12, 3);
+        const b = planBox(design, s.k * 0.12, 4);
         return b.width / s.k <= planSpace.width && b.height / s.k <= planSpace.height;
       }) ?? fitScale(box.width, box.height, planSpace);
     const removed = design.room.walls.some((w) => w.status === "removed");
-    const built = design.room.walls.some((w) => w.status === "new");
+    const closed = design.openings.filter((o) => o.status === "close");
+    const built = design.room.walls.some((w) => w.status === "new") || closed.length > 0;
     const fresh = design.openings.filter((o) => keys.has(o.id)).sort((a, b) => (keys.get(a.id) ?? "").localeCompare(keys.get(b.id) ?? "", undefined, { numeric: true }));
     const demoNotes = [
       "Read with the floor plan, the interior elevations and the MEP plan.",
       ...(design.demo?.remove.length ? [`Remove: ${design.demo.remove.map((x) => x.replace(/^Existing /, "existing ").toLowerCase()).join("; ")}. Cap and protect the plumbing, gas and electrical left in place.`] : []),
       ...(design.demo?.notes?.trim() ? [design.demo.notes.trim()] : []),
+      ...closed.map((o) => `Close the existing ${o.type === "door" ? "door" : o.type === "window" ? "window" : "opening"} on ${shape.walls.find((w) => w.id === o.wall)?.label ?? "its wall"} (${fmtIn(o.width)} wide, ${fmtIn(o.offset)} from the left end): remove the ${o.type === "door" ? "door, frame and casing" : o.type === "window" ? "window, frame and casing" : "casing"}, frame in to match the wall, and finish flush with the wall around it${o.type === "window" ? "; the outside finished to match the exterior" : ""}.`),
       "Walls, doors and windows not marked stay. Protect them, the floors beyond the work area and anything staying.",
       ...(removed || built ? ["Confirm with a structural engineer before altering any wall that may be load-bearing; the engineer's drawings join this set."] : []),
       "New walls and openings are dimensioned from the finished drywall; new doors and windows by their centerlines from the corner.",

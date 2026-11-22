@@ -20,7 +20,7 @@ export const DEMO_ITEMS = [
 export function needsDemoPlan(d: DesignData): boolean {
   return (d.demo?.remove.length ?? 0) > 0 || !!d.demo?.notes?.trim()
     || d.room.walls.some((w) => w.status === "new" || w.status === "removed")
-    || d.openings.some((o) => o.status === "new");
+    || d.openings.some((o) => o.status === "new" || o.status === "close");
 }
 
 /** Blocking for wall-hung cabinets and hoods: the spans along each wall, merged. */

@@ -15,6 +15,7 @@
 // Everything here is plain geometry, so it can be tested without drawing.
 
 import type { DesignData, Opening, PlacedItem } from "./types";
+import { liveOpenings } from "./types";
 import { pointOn, roomShape, type RunFrame, type Vec } from "./geometry";
 
 /** Top of a standard base cabinet, without the countertop. */
@@ -154,7 +155,7 @@ export function planTiers(design: DesignData): number {
   let most = 1;
   for (const w of roomShape(design.room).walls) {
     if (w.open) continue;
-    const n = 1 + (openingStops(design.openings, w.id, w.length).length > 2 ? 1 : 0) + (centerlines(design, w.id).length ? 1 : 0);
+    const n = 1 + (openingStops(liveOpenings(design), w.id, w.length).length > 2 ? 1 : 0) + (centerlines(design, w.id).length ? 1 : 0);
     most = Math.max(most, n);
   }
   return most;

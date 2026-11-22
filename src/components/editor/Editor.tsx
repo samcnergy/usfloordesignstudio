@@ -1780,12 +1780,13 @@ function OpeningInspector({ op, design, update, remove }: { op: Opening; design:
       <div className="field">
         <span className="field-label">For the construction plan</span>
         <div className="chips">
-          {(["existing", "new"] as const).map((st) => (
+          {(["existing", "new", "close"] as const).map((st) => (
             <button key={st} className={`chip ${(op.status ?? "existing") === st ? "chip-on" : ""}`} onClick={() => update({ status: st === "existing" ? undefined : st })}>
-              {st === "existing" ? "Existing, stays" : "New"}
+              {st === "existing" ? "Existing, stays" : st === "new" ? "New" : "Existing, to close up"}
             </button>
           ))}
         </div>
+        {op.status === "close" && <span className="muted">Shown as solid wall in every drawing of the new room; the construction plan shows the infill. Cabinets can go here.</span>}
       </div>
       {op.type === "door" && (
         <div className="field">

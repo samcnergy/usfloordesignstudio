@@ -12,6 +12,7 @@
 import { isWall, roomShape, runFrame, verticalSpan, openingSpan } from "./geometry";
 import { cabinetTop } from "./place";
 import type { Catalog, DesignData, PlacedItem, Product, ProductLine } from "./types";
+import { liveOpenings } from "./types";
 import { fmtIn as fmt } from "./units";
 
 export const FILLER_WIDTHS = [0.75, 1, 1.5, 2];
@@ -167,7 +168,7 @@ export function fillWall(design: DesignData, catalog: Catalog, wallId: string, m
       // the space over a range is the hood's
       if (row.kind === "wall" && it.style === "range") blocked.push([it.offset, it.offset + it.width, "appliance"]);
     }
-    for (const op of design.openings.filter((o) => o.wall === wallId)) {
+    for (const op of liveOpenings(design).filter((o) => o.wall === wallId)) {
       const [o0, o1] = openingSpan(op);
       // a window sits behind the counter, so it only stops the wall row and anything taller than the counter
       if (overlap(o0, o1, row.bottom, top) && !(op.type === "window" && row.kind === "base" && o0 >= top - 0.01)) {

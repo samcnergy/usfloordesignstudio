@@ -8,6 +8,7 @@
 import { roomShape } from "./geometry";
 import { BASE_TOP, COUNTER_STYLES } from "./plan";
 import type { DesignData } from "./types";
+import { liveOpenings } from "./types";
 
 export type FinishUse = "floor" | "walls" | "backsplash" | "ceiling" | "base";
 export const FINISH_USES: FinishUse[] = ["floor", "walls", "backsplash", "ceiling", "base"];
@@ -130,7 +131,7 @@ export function finishQuantity(d: DesignData, use: FinishUse, counterThick: numb
     for (const w of walls) {
       const blocked = [
         ...d.items.filter((i) => i.run === w.id && i.mountHeight === 0).map((i) => [i.offset, i.offset + i.width] as [number, number]),
-        ...d.openings.filter((o) => o.wall === w.id && o.type === "door").map((o) => [o.offset, o.offset + o.width] as [number, number]),
+        ...liveOpenings(d).filter((o) => o.wall === w.id && o.type === "door").map((o) => [o.offset, o.offset + o.width] as [number, number]),
       ].sort((a, b) => a[0] - b[0]);
       let x = 0, free = 0;
       for (const [a, b] of blocked) { if (a > x) free += a - x; x = Math.max(x, b); }
@@ -141,7 +142,7 @@ export function finishQuantity(d: DesignData, use: FinishUse, counterThick: numb
   }
   // walls: the wall area less doors and windows, less the backsplash
   let area = walls.reduce((n, w) => n + w.length * d.room.ceiling, 0);
-  for (const o of d.openings) area -= o.width * o.height;
+  for (const o of liveOpenings(d)) area -= o.width * o.height;
   // and the wall the cabinets and appliances hide
   for (const i of d.items) if (walls.some((w) => w.id === i.run) && i.style !== "hood") area -= i.width * i.height;
   area -= backsplashAreas(d, counterThick).reduce((n, b) => n + (b.s1 - b.s0) * b.height, 0);

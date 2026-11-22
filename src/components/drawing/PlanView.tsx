@@ -9,6 +9,7 @@
 
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { DesignData, Island, Opening, PlacedItem } from "@/lib/types";
+import { liveOpenings } from "@/lib/types";
 import { allFrames, insideRoom, islandDepth, islandFrame, islandRect, itemCenter, itemLabel, itemRect, itemQuad, pointOn, pointsAttr, roomShape, runQuad, type RunFrame, type Vec } from "@/lib/geometry";
 import { fmtFtIn, fmtIn } from "@/lib/units";
 import { DimAligned, DimChain } from "./dims";
@@ -156,7 +157,7 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
   const isSelected = (id: string) => (selectedIds ? selectedIds.has(id) : selectedId === id);
   const t = design.room.wallThickness;
   const shape = roomShape(design.room);
-  const frameBox = planBox(design, print ? print.scale * 0.12 : undefined, print && mep ? mepTiers(design, mep.items) : print && finish ? 1 : print && (demo || counter || soffit) ? 3 : undefined);
+  const frameBox = planBox(design, print ? print.scale * 0.12 : undefined, print && mep ? mepTiers(design, mep.items) : print && finish ? 1 : print && demo ? 4 : print && (counter || soffit) ? 3 : undefined);
   const fs = frameBox.fs;
   const mono = !!print;
   const frames = new Map(allFrames(design).map((f) => [f.id, f]));
@@ -262,7 +263,7 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
           if (i.run !== w.id || i.mountHeight > 0 || i.offset > s + r * 1.2 || i.offset + i.width < s - r * 1.2) continue;
           d = Math.max(d, i.depth + (i.style === "dishwasher" ? DROP_DOOR.dishwasher : i.style === "range" ? DROP_DOOR.range : i.style === "refrigerator" ? (i.width >= 33 ? i.width / 2 : i.width) : 0));
         }
-        for (const op of design.openings) {
+        for (const op of liveOpenings(design)) {
           if (op.wall === w.id && op.type === "door" && op.offset < s + r * 1.2 && op.offset + op.width > s - r * 1.2) d = Math.max(d, op.width);
         }
         return d;
@@ -355,6 +356,25 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
         const selected = isSelected(op.id);
         const problem = problemIds?.has(op.id);
         const hit = pointsAttr(runQuad(frame, op.offset, op.offset + op.width, -t, Math.min(op.width, 12)));
+        if (op.status === "close") {
+          // an existing opening to be closed up: solid wall in the finished room; the construction plan shows
+          // the infill hatched as new wall, and the editor keeps it visible so it can be changed back
+          if (print && !demo) return null;
+          const infill = pointsAttr(runQuad(frame, op.offset, op.offset + op.width, -t, 0));
+          const c = pointOn(frame, op.offset + op.width / 2, fs * 1.6);
+          return (
+            <g key={op.id} onPointerDown={down({ kind: "opening", id: op.id })} style={{ cursor: onTargetDown ? "grab" : undefined }}>
+              <polygon points={hit} fill="transparent" />
+              <polygon points={infill} fill="url(#newwall)" stroke="#000000" strokeWidth={0.45} />
+              <text x={c.x} y={c.y + fs * 0.3} fontSize={fs * 0.7} textAnchor="middle" fontWeight={700} fill="#1A1D1F" stroke="#FFFFFF" strokeWidth={fs * 0.2} paintOrder="stroke">
+                {`CLOSE EXISTING ${op.type === "door" ? "DOOR" : op.type === "window" ? "WINDOW" : "OPENING"}`}
+              </text>
+              {(selected || problem) && (
+                <polygon points={pointsAttr(runQuad(frame, op.offset, op.offset + op.width, -t - 0.6, 0.6))} fill="none" stroke={selected ? SELECT : PROBLEM} strokeWidth={1.1} />
+              )}
+            </g>
+          );
+        }
         return (
           <g key={op.id} onPointerDown={down({ kind: "opening", id: op.id })} style={{ cursor: onTargetDown ? "grab" : undefined }}>
             <polygon points={hit} fill="transparent" />
@@ -611,6 +631,12 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
                 tiers.push(<DimChain key="cl" origin={w.origin} u={w.u} o={o} d={d} stops={[0, ...centers.keys(), w.length]} fs={fs * 0.8} from={t} centers={centers} />);
                 d += step;
               }
+              // openings being closed: where the infill starts and stops
+              const shut = design.openings.filter((op) => op.wall === w.id && op.status === "close");
+              if (shut.length) {
+                tiers.push(<DimChain key="shut" origin={w.origin} u={w.u} o={o} d={d} stops={[0, ...shut.flatMap((op) => [op.offset, op.offset + op.width]), w.length]} fs={fs * 0.8} from={t} />);
+                d += step;
+              }
               const blk = blockingSpans(design).filter((b) => b.wall === w.id);
               if (blk.length) {
                 tiers.push(<DimChain key="blk" origin={w.origin} u={w.u} o={o} d={d} stops={[0, ...blk.flatMap((b) => [b.s0, b.s1]), w.length]} fs={fs * 0.8} from={t} />);
@@ -629,7 +655,7 @@ export function PlanView({ design, catalog, selectedId, selectedIds, problemIds,
               const tiers: React.ReactNode[] = [];
               const step = fs * 1.4;
               let d = t + step;
-              const inner = w.open || mep ? [] : openingStops(design.openings, w.id, w.length);
+              const inner = w.open || mep ? [] : openingStops(liveOpenings(design), w.id, w.length);
               if (inner.length > 2) {
                 tiers.push(<DimChain key="in" origin={w.origin} u={w.u} o={o} d={d} stops={inner} fs={fs * 0.8} from={t} />);
                 d += step;
